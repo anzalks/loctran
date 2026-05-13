@@ -4,12 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loctran"
-version = "0.0.1"
+version = "0.1.1b1"
 description = "Local-first document translation and conversion toolkit"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Anzal KS" }]
 license = { text = "Apache-2.0" }
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Intended Audience :: End Users/Desktop",
+  "Topic :: Text Processing :: Linguistic",
+]
 dependencies = [
   "tqdm",
   "langdetect",
@@ -18,6 +29,10 @@ dependencies = [
   "requests",
   "fpdf",
 ]
+
+[project.urls]
+Repository = "https://github.com/anzalks/loctran"
+"Bug Tracker" = "https://github.com/anzalks/loctran/issues"
 
 [project.optional-dependencies]
 ocr = [
@@ -35,9 +50,12 @@ test = [
 ]
 
 [project.scripts]
-loctran = "main:cli_entry"
-loctran-doctor = "app.diagnostics:run_doctor"
+loctran = "loctran.cli:cli_entry"
+loctran-doctor = "loctran.diagnostics:run_doctor"
 
 [tool.setuptools]
-packages = ["app"]
-py-modules = ["launcher", "extract", "translate", "main", "verify_pipeline"]
+packages = ["loctran", "loctran.server"]
+py-modules = ["launcher"]
+
+[tool.setuptools.package-data]
+"loctran.server" = ["static/*"]

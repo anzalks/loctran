@@ -52,24 +52,24 @@ class TestTranslateSegmentsHappy:
             {"id": 1, "translation": "Monde"},
         ])
 
-        with patch("translate._get_ollama") as mock_get_ollama:
+        with patch("loctran.translate._get_ollama") as mock_get_ollama:
             mock_get_ollama.return_value = MagicMock(chat=MagicMock(return_value=llm_reply))
-            from translate import translate_segments
+            from loctran.translate import translate_segments
             result = translate_segments(segs, model="test-model", target_lang="French")
 
         assert result == {0: "Bonjour", 1: "Monde"}
 
     def test_empty_segments_returns_empty_dict(self):
-        from translate import translate_segments
+        from loctran.translate import translate_segments
         assert translate_segments([], model="test-model", target_lang="French") == {}
 
     def test_whitespace_only_segments_skipped(self):
         segs = [_segment("   "), _segment("\t"), _segment("Hello")]
         llm_reply = _ollama_response([{"id": 0, "translation": "Bonjour"}])
 
-        with patch("translate._get_ollama") as mock_get_ollama:
+        with patch("loctran.translate._get_ollama") as mock_get_ollama:
             mock_get_ollama.return_value = MagicMock(chat=MagicMock(return_value=llm_reply))
-            from translate import translate_segments
+            from loctran.translate import translate_segments
             result = translate_segments(segs, model="test-model", target_lang="French")
 
         assert len(result) == 1
@@ -87,11 +87,11 @@ class TestTranslateSegmentsHappy:
                 for item in payload
             ])
 
-        with patch("translate._get_ollama") as mock_get_ollama:
+        with patch("loctran.translate._get_ollama") as mock_get_ollama:
             mock_ollama = MagicMock()
             mock_ollama.chat = MagicMock(side_effect=_reply)
             mock_get_ollama.return_value = mock_ollama
-            from translate import translate_segments
+            from loctran.translate import translate_segments
             result = translate_segments(segs, model="test-model", target_lang="French")
 
         assert mock_ollama.chat.call_count >= 2
@@ -122,10 +122,10 @@ class TestTranslateSegmentsFallback:
                     return {"message": {"content": "Beta"}}
                 return {"message": {"content": "Gamma"}}
 
-        with patch("translate._get_ollama") as mock_get_ollama:
+        with patch("loctran.translate._get_ollama") as mock_get_ollama:
             mock_get_ollama.return_value = MagicMock(chat=MagicMock(side_effect=_selective_reply))
-            with patch("translate.time.sleep"):   # skip real sleeps
-                from translate import translate_segments
+            with patch("loctran.translate.time.sleep"):   # skip real sleeps
+                from loctran.translate import translate_segments
                 result = translate_segments(segs, model="test-model", target_lang="French")
 
         # Must have results for all 3 segments
@@ -135,10 +135,10 @@ class TestTranslateSegmentsFallback:
         """If every call raises, translate_segments returns {} without crashing."""
         segs = [_segment("Hello"), _segment("World")]
 
-        with patch("translate._get_ollama") as mock_get_ollama:
+        with patch("loctran.translate._get_ollama") as mock_get_ollama:
             mock_get_ollama.return_value = MagicMock(chat=MagicMock(side_effect=RuntimeError("network down")))
-            with patch("translate.time.sleep"):
-                from translate import translate_segments
+            with patch("loctran.translate.time.sleep"):
+                from loctran.translate import translate_segments
                 result = translate_segments(segs, model="test-model", target_lang="French")
 
         assert isinstance(result, dict)
@@ -157,10 +157,10 @@ class TestTranslateSegmentsFallback:
             {"message": {"content": "WHY"}},
         ])
 
-        with patch("translate._get_ollama") as mock_get_ollama:
+        with patch("loctran.translate._get_ollama") as mock_get_ollama:
             mock_get_ollama.return_value = MagicMock(chat=MagicMock(side_effect=lambda **kw: next(call_iter)))
-            with patch("translate.time.sleep"):
-                from translate import translate_segments
+            with patch("loctran.translate.time.sleep"):
+                from loctran.translate import translate_segments
                 result = translate_segments(segs, model="test-model", target_lang="French")
 
         # Sequential fallback must yield something for both segments
@@ -174,7 +174,7 @@ class TestTranslateSegmentsFallback:
 class TestTranslateChunkInternal:
     def test_positional_mapping_used_when_ids_mismatched(self):
         """If LLM resets IDs to 0-based, positional mapping must still work."""
-        from translate import _translate_chunk
+        from loctran.translate import _translate_chunk
 
         chunk = [{"id": 10, "text": "Foo"}, {"id": 11, "text": "Bar"}]
         # LLM resets ids to 0 and 1
@@ -183,7 +183,7 @@ class TestTranslateChunkInternal:
             {"id": 1, "translation": "Qux"},
         ])
 
-        with patch("translate._get_ollama") as mock_get_ollama:
+        with patch("loctran.translate._get_ollama") as mock_get_ollama:
             mock_get_ollama.return_value = MagicMock(chat=MagicMock(return_value=reply))
             result = _translate_chunk(chunk, model="test-model", target_lang="French")
 
@@ -191,8 +191,8 @@ class TestTranslateChunkInternal:
         assert result[11] == "Qux"
 
     def test_empty_chunk_returns_empty(self):
-        from translate import _translate_chunk
-        with patch("translate._get_ollama") as mock_get_ollama:
+        from loctran.translate import _translate_chunk
+        with patch("loctran.translate._get_ollama") as mock_get_ollama:
             mock_get_ollama.return_value = MagicMock(chat=MagicMock())
             result = _translate_chunk([], model="test-model", target_lang="French")
         # Empty chunk → no LLM call required (the function may call or not call)

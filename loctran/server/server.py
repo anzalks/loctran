@@ -1,0 +1,667 @@
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+import shutil
+import os
+import uuid
+import sys
+import subprocess
+from pathlib import Path
+from typing import Dict, Optional, List
+import time
+import threading
+import logging
+import asyncio
+from contextlib import asynccontextmanager
+
+# --- Configuration & Logging ---
+DEBUG_MODE = os.getenv("LOCTRAN_DEBUG", "0") == "1"
+DESKTOP_MODE = os.getenv("LOCTRAN_DESKTOP_MODE", "0") == "1"
+
+# Configure Logging
+logging.basicConfig(
+    level=logging.DEBUG if DEBUG_MODE else logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("loctran")
+
+# Directories
+BASE_DIR = Path(__file__).parent.parent.parent  # repo root: loctran/server/server.py → loctran/server → loctran → repo root
+UPLOAD_DIR = BASE_DIR / "uploads"
+OUTPUT_DIR = BASE_DIR / "outputs"
+
+# Ensure directories exist
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Add paths for local modules
+sys.path.append(str(BASE_DIR))
+sys.path.append(str(Path(__file__).parent))
+
+try:
+    from loctran.extract import process_file
+    from loctran.translate import process_folder, list_models, check_ollama_connection, DEFAULT_MODEL
+    from loctran.server.compress import compress_file, parse_size, format_size
+except ImportError as e:
+    logger.error(f"Failed to import local modules: {e}")
+    sys.exit(1)
+
+# --- State Management ---
+class JobStatus:
+    QUEUED = "queued"
+    EXTRACTING = "extracting"
+    TRANSLATING = "translating"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    COMPRESSING = "compressing"
+
+# In-Memory Job Store (Note: Production would use valid persistent storage like SQLite)
+jobs: Dict[str, dict] = {}
+
+# Lifecycle Management
+active_connections: List[WebSocket] = []
+DIALOG_OPEN = False
+GRACE_PERIOD = 3 
+SHUTDOWN_EVENT = threading.Event()
+JOB_RETENTION_SECONDS = 3600 # 1 Hour
+
+# Ollama Process Management
+# Track whether Ollama was pre-existing (not spawned by this app)
+ollama_was_preexisting = False
+# Track Ollama process if this app spawns it (future enhancement)
+ollama_process = None
+
+# --- Background Tasks ---
+
+def run_pipeline(job_id: str, file_path: Path, lang: str, model: str, original_filename: str, output_root: Path = OUTPUT_DIR, use_ai_ocr: bool = False, vision_model: str = "glm-ocr:latest"):
+    """Background task to run extraction and translation."""
+    try:
+        def update_progress(msg, percent):
+            if job_id in jobs:
+                jobs[job_id]["message"] = msg
+                jobs[job_id]["progress"] = percent
+            
+        jobs[job_id]["status"] = JobStatus.EXTRACTING
+        update_progress("Starting extraction...", 0)
+        logger.info(f"Job {job_id}: Started extraction for {file_path.name}")
+
+        # 1. Extraction
+        if output_root == OUTPUT_DIR:
+             folder_name = Path(file_path).stem 
+        else:
+             folder_name = Path(original_filename).stem
+
+        doc_dir = process_file(file_path, output_root, progress_callback=update_progress, folder_name=folder_name, use_ai_ocr=use_ai_ocr, vision_model=vision_model)
+        
+        if not doc_dir:
+            raise Exception("Extraction failed to create output directory")
+
+        jobs[job_id]["result_path"] = str(doc_dir)
+
+        # 2. Translation
+        jobs[job_id]["status"] = JobStatus.TRANSLATING
+        update_progress("Starting translation...", 50)
+        
+        process_folder(doc_dir, lang, model, progress_callback=update_progress)
+        
+        # 3. Complete
+        update_progress("All done!", 100)
+        jobs[job_id]["status"] = JobStatus.COMPLETED
+        jobs[job_id]["result_url"] = f"/view/{job_id}/{doc_dir.name}.html"
+        logger.info(f"Job {job_id}: Completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Job {job_id} Failed: {e}", exc_info=True)
+        if job_id in jobs:
+            jobs[job_id]["status"] = JobStatus.FAILED
+            jobs[job_id]["message"] = f"Error: {str(e)}"
+    finally:
+        # Cleanup input file
+        try:
+            if file_path.exists():
+                os.remove(file_path)
+                logger.debug(f"Cleaned up upload file: {file_path}")
+        except Exception as e:
+            logger.warning(f"Failed to cleanup upload file {file_path}: {e}")
+
+def run_conversion(job_id: str, file_path: Path, target_size_str: str, output_root: Path = OUTPUT_DIR, output_format: str = "pdf"):
+    """Background task to run file compression/conversion."""
+    try:
+        def update_progress(msg, percent):
+            if job_id in jobs:
+                jobs[job_id]["message"] = msg
+                jobs[job_id]["progress"] = percent
+            
+        jobs[job_id]["status"] = JobStatus.COMPRESSING
+        update_progress("Starting conversion...", 10)
+        logger.info(f"Job {job_id}: Started conversion for {file_path.name}")
+
+        try:
+            target_size = parse_size(target_size_str)
+        except ValueError as e:
+            raise Exception(f"Invalid target size: {e}")
+
+        # Determine Output Filename
+        input_stem = file_path.stem
+        if not output_format.startswith('.'):
+            output_format = f".{output_format}"
+            
+        output_filename = f"{input_stem}_compressed{output_format}"
+        output_path = output_root / output_filename
+        
+        update_progress("Compressing...", 50)
+        
+        result = compress_file(str(file_path), str(output_path), target_size)
+        
+        update_progress("All done!", 100)
+        jobs[job_id]["status"] = JobStatus.COMPLETED
+        jobs[job_id]["result_path"] = str(output_path)
+        jobs[job_id]["result_url"] = f"/view_file/{job_id}/{output_filename}"
+        
+        jobs[job_id]["stats"] = {
+            "original": format_size(result['original_size']),
+            "compressed": format_size(result['compressed_size']),
+            "reduction": f"{(1 - result['compressed_size']/result['original_size'])*100:.1f}%" if result['original_size'] > 0 else "0%"
+        }
+        logger.info(f"Job {job_id}: Completed. Reduction: {jobs[job_id]['stats']['reduction']}")
+        
+    except Exception as e:
+        logger.error(f"Job {job_id} Failed: {e}", exc_info=True)
+        if job_id in jobs:
+            jobs[job_id]["status"] = JobStatus.FAILED
+            jobs[job_id]["message"] = f"Error: {str(e)}"
+    finally:
+        # Cleanup input file
+        try:
+            if file_path.exists():
+                os.remove(file_path)
+                logger.debug(f"Cleaned up upload file: {file_path}")
+        except Exception as e:
+            logger.warning(f"Failed to cleanup upload file {file_path}: {e}")
+
+# --- Worker Threads ---
+
+def heartbeat_monitor():
+    """Background thread to manage server lifecycle."""
+    logger.info("Lifecycle monitor started")
+    time.sleep(2) # Initial startup buffer
+    
+    while not SHUTDOWN_EVENT.is_set():
+        time.sleep(1)
+        
+        # Check reasons to stay alive
+        try:
+            active_jobs = [j for j in jobs.values() if j["status"] not in [JobStatus.COMPLETED, JobStatus.FAILED]]
+            has_connections = len(active_connections) > 0
+            
+            if has_connections or active_jobs or DIALOG_OPEN:
+                continue
+                
+            logger.debug("Idle detected. Waiting grace period...")
+            time.sleep(GRACE_PERIOD)
+            
+            # Re-check
+            if len(active_connections) > 0:
+                logger.info("Connection restored. Aborting shutdown.")
+                continue
+                
+            logger.info("No connections or active jobs. Shutting down...")
+            _stop_ollama()
+            os._exit(0)
+            
+        except Exception as e:
+            logger.error(f"Error in heartbeat monitor: {e}")
+
+        # Periodic Job Cleanup
+        if int(time.time()) % 60 == 0:
+            cleanup_old_jobs()
+
+def cleanup_old_jobs():
+    """Remove old completed/failed jobs from memory."""
+    try:
+        now = time.time()
+        to_delete = []
+        for jid, job in jobs.items():
+            if job["status"] in [JobStatus.COMPLETED, JobStatus.FAILED]:
+                # If created_at is missing (legacy), assume it's old
+                created_at = job.get("created_at", 0)
+                if now - created_at > JOB_RETENTION_SECONDS:
+                    to_delete.append(jid)
+        
+        for jid in to_delete:
+            del jobs[jid]
+            logger.debug(f"Cleaned up old job {jid}")
+            
+        if to_delete:
+            logger.info(f"Cleaned up {len(to_delete)} old jobs")
+    except Exception as e:
+        logger.error(f"Job cleanup failed: {e}")
+
+def check_ai_engine():
+    """Check Ollama connection in background and track pre-existing state."""
+    global ollama_was_preexisting
+    
+    logger.info("Checking AI Engine (Ollama)...")
+    try:
+        check_ollama_connection(DEFAULT_MODEL)
+        # If we successfully connect, Ollama is pre-existing (not spawned by us)
+        ollama_was_preexisting = True
+        logger.info("Ollama connection verified. (Pre-existing instance)")
+    except Exception as e:
+        logger.warning(f"Ollama check failed: {e}")
+        logger.warning("Ollama must be running on localhost:11434. Use 'loctran-doctor' to diagnose.")
+        ollama_was_preexisting = False
+
+
+def _stop_ollama():
+    """Gracefully terminate Ollama process if spawned by this app.
+    
+    SAFETY: This function respects pre-existing Ollama instances.
+    - If Ollama was already running before loctran started, we do NOT kill it.
+    - If loctran spawned Ollama via subprocess.Popen, we gracefully terminate only that process.
+    """
+    global ollama_process, ollama_was_preexisting
+    
+    try:
+        # Never terminate pre-existing Ollama instances
+        if ollama_was_preexisting:
+            logger.info("Ollama was pre-existing; skipping termination to preserve user's Ollama setup.")
+            return
+        
+        # If this app spawned Ollama, gracefully terminate the specific process
+        if ollama_process is not None:
+            try:
+                logger.info(f"Terminating Ollama process (PID: {ollama_process.pid})...")
+                ollama_process.terminate()
+                ollama_process.wait(timeout=5)
+                logger.info("Ollama terminated gracefully.")
+            except subprocess.TimeoutExpired:
+                logger.warning("Ollama did not terminate gracefully; force killing...")
+                ollama_process.kill()
+                ollama_process.wait()
+            except Exception as e:
+                logger.debug(f"Error terminating Ollama process: {e}")
+            return
+        
+        # No process to terminate and not pre-existing; log and return
+        logger.debug("No Ollama process to terminate.")
+        
+    except Exception as e:
+        logger.debug(f"Ollama termination attempt: {e}")
+
+# --- FastAPI App ---
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Server starting up...")
+
+    # Start background threads
+    if DESKTOP_MODE:
+        t_monitor = threading.Thread(target=heartbeat_monitor, daemon=True)
+        t_monitor.start()
+        logger.info("Desktop mode enabled: auto-shutdown monitor is active")
+    else:
+        logger.info("Desktop mode disabled: auto-shutdown monitor is inactive")
+
+    t_ai = threading.Thread(target=check_ai_engine, daemon=True)
+    t_ai.start()
+    
+    yield
+    
+    # Shutdown
+    logger.info("Server shutting down...")
+    _stop_ollama()
+    SHUTDOWN_EVENT.set()
+
+app = FastAPI(title="Loctran", lifespan=lifespan)
+
+# CORS - Restrict somewhat for local security
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+# Content Security Policy
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "img-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; " 
+        "script-src 'self' 'unsafe-inline'; "
+        "connect-src 'self' ws: wss:;" 
+    )
+    return response
+
+# Constants
+MAX_FILE_SIZE = 50 * 1024 * 1024 # 50 MB
+
+# --- Endpoints ---
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "jobs": len(jobs)}
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Upload a PDF or Image file."""
+    # 1. Validation
+    if not file.filename:
+        raise HTTPException(400, "No filename provided")
+        
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ['.pdf', '.jpg', '.jpeg', '.png', '.txt']:
+        raise HTTPException(400, "Invalid file type. Only PDF, JPG, PNG, TXT allowed.")
+        
+    # 2. Save with size limit check
+    file_id = str(uuid.uuid4())
+    file_path = UPLOAD_DIR / f"{file_id}_{file.filename}" # Sanitize?
+    
+    try:
+        size = 0
+        with open(file_path, "wb") as buffer:
+            while content := await file.read(1024*1024): # 1MB chunks
+                size += len(content)
+                if size > MAX_FILE_SIZE:
+                    file_path.unlink(missing_ok=True)
+                    raise HTTPException(413, f"File too large (Max {MAX_FILE_SIZE/1024/1024}MB)")
+                buffer.write(content)
+                
+        return {
+            "filename": file.filename, 
+            "saved_path": str(file_path), 
+            "id": file_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Upload failed: {e}")
+        raise HTTPException(500, "File upload failed")
+
+@app.get("/choose_folder")
+def choose_folder(prompt: str = "Choose where to save"):
+    """Opens a native folder picker dialog (cross-platform)."""
+    global DIALOG_OPEN
+    DIALOG_OPEN = True
+    try:
+        if sys.platform == "darwin":
+            # macOS: Use AppleScript
+            script = f'POSIX path of (choose folder with prompt "{prompt}")'
+            result = subprocess.check_output(["osascript", "-e", script]).decode().strip()
+            return {"path": result.rstrip("/")} if result else {"error": "No folder selected"}
+            
+        elif sys.platform == "win32":
+            # Windows: Use PowerShell
+            ps_script = f'''
+            Add-Type -AssemblyName System.Windows.Forms
+            $folder = New-Object System.Windows.Forms.FolderBrowserDialog
+            $folder.Description = "{prompt}"
+            if ($folder.ShowDialog() -eq "OK") {{ $folder.SelectedPath }} else {{ exit 1 }}
+            '''
+            result = subprocess.check_output(["powershell", "-Command", ps_script]).decode().strip()
+            return {"path": result} if result else {"error": "No folder selected"}
+            
+        else:
+            # Linux: Try zenity first, then kdialog
+            try:
+                result = subprocess.check_output([
+                    "zenity", "--file-selection", "--directory",
+                    f"--title={prompt}"
+                ]).decode().strip()
+                return {"path": result} if result else {"error": "No folder selected"}
+            except FileNotFoundError:
+                try:
+                    result = subprocess.check_output([
+                        "kdialog", "--getexistingdirectory", ".",
+                        "--title", prompt
+                    ]).decode().strip()
+                    return {"path": result} if result else {"error": "No folder selected"}
+                except FileNotFoundError:
+                     return {"error": "No dialog tool found (install zenity or kdialog)"}
+                
+    except subprocess.CalledProcessError:
+        return {"error": "Selection cancelled"}
+    except Exception as e:
+        logger.error(f"Folder selection error: {e}")
+        return {"error": f"Selection error: {e}"}
+    finally:
+        DIALOG_OPEN = False
+
+@app.post("/process")
+def start_process(filename: str, saved_path: str, lang: str, model: str, background_tasks: BackgroundTasks, output_path: Optional[str] = None, use_ai_ocr: bool = False, vision_model: str = "glm-ocr:latest"):
+    """Start the translation pipeline."""
+    job_id = str(uuid.uuid4())
+
+    # --- File validation ---
+    if not Path(saved_path).exists():
+        raise HTTPException(400, "Source file not found")
+
+    # --- Vision model validation ---
+    _VISION_KEYWORDS = ('vision', 'llava', 'moondream', 'glm-ocr', 'clip', 'pixtral', 'minicpm-v', 'phi4')
+    vision_name_lower = vision_model.lower()
+    _vision_ok = any(kw in vision_name_lower for kw in _VISION_KEYWORDS)
+    if not _vision_ok:
+        import ollama as _ollama
+        try:
+            info = _ollama.show(vision_model)
+            info_str = str(info).lower()
+            _vision_ok = any(kw in info_str for kw in _VISION_KEYWORDS)
+        except Exception:
+            pass
+    if not _vision_ok:
+        raise HTTPException(
+            status_code=400,
+            detail="OCR engine must be a vision model. Please select a valid vision model."
+        )
+
+    # --- Translation model validation ---
+    _TRANSLATE_KEYWORDS = ('gemma', 'qwen', 'llama', 'mistral', 'hunyuan', 'phi', 'deepseek')
+    if not any(kw in model.lower() for kw in _TRANSLATE_KEYWORDS):
+        raise HTTPException(
+            status_code=400,
+            detail="Selected model is not compatible with translation. Please select a valid LLM."
+        )
+
+    # --- Determine Output Root ---
+    if output_path and Path(output_path).exists():
+        output_root = Path(output_path)
+    else:
+        output_root = Path.home() / "Documents" / "Loctran_Translations"
+        output_root.mkdir(parents=True, exist_ok=True)
+
+    msg = f"Queued (Saving to {output_root})"
+
+    jobs[job_id] = {
+        "id": job_id,
+        "filename": filename,
+        "status": JobStatus.QUEUED,
+        "progress": 0,
+        "message": msg,
+        "result_url": None,
+        "result_path": str(output_root / Path(filename).stem),
+        "created_at": time.time()
+    }
+
+    background_tasks.add_task(run_pipeline, job_id, Path(saved_path), lang, model, filename, output_root, use_ai_ocr, vision_model)
+
+    logger.info(f"Queued translation job {job_id} for {filename}")
+    return {"job_id": job_id}
+
+@app.post("/convert")
+def start_conversion(filename: str, saved_path: str, target_size: str, output_format: str, background_tasks: BackgroundTasks, output_path: Optional[str] = None):
+    """Start the conversion/compression job."""
+    job_id = str(uuid.uuid4())
+    
+    # Validation
+    if not Path(saved_path).exists():
+         raise HTTPException(400, "Source file not found")
+
+    # Determine Output Root
+    if output_path and Path(output_path).exists():
+        output_root = Path(output_path)
+    else:
+        output_root = Path.home() / "Documents" / "Loctran_Conversions"
+        output_root.mkdir(parents=True, exist_ok=True)
+        
+    msg = f"Queued (Saving to {output_root})"
+
+    jobs[job_id] = {
+        "id": job_id,
+        "filename": filename,
+        "status": JobStatus.QUEUED,
+        "progress": 0,
+        "message": msg,
+        "result_url": None,
+        "result_path": str(output_root),
+        "created_at": time.time()
+    }
+    
+    background_tasks.add_task(run_conversion, job_id, Path(saved_path), target_size, output_root, output_format)
+    
+    logger.info(f"Queued conversion job {job_id} for {filename}")
+    return {"job_id": job_id}
+
+@app.get("/status/{job_id}")
+def get_status(job_id: str):
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return jobs[job_id]
+
+@app.get("/models")
+def get_models():
+    """List available Ollama models (legacy, filtered)."""
+    try:
+        all_models = list_models()
+        translation_models = [
+            m for m in all_models 
+            if 'ocr' not in m.lower() and 'vision' not in m.lower()
+        ]
+        return {"models": translation_models}
+    except Exception as e:
+        logger.error(f"Failed to list models: {e}")
+        return {"models": []}
+
+@app.get("/api/models")
+def get_all_models():
+    """Return all locally available Ollama models."""
+    import ollama as _ollama
+    try:
+        result = _ollama.list()
+        # SDK returns a ListResponse with a .models attribute (list of Model objects)
+        # Each Model object has a .model attribute (the tag string, e.g. 'translategemma:4b')
+        models = result.models if hasattr(result, 'models') else list(result)
+        names = [{"name": m.model} for m in models if getattr(m, 'model', None)]
+        return {"models": names}
+    except Exception as e:
+        logger.error(f"Failed to list Ollama models: {e}")
+        return {"models": []}
+
+# --- Secure File Serving ---
+
+@app.get("/view/{job_id}/{relative_path:path}")
+def view_result_file(job_id: str, relative_path: str):
+    """Securely serve files from a job's output directory."""
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+        
+    result_path_str = jobs[job_id].get("result_path")
+    if not result_path_str:
+         raise HTTPException(404, "Result path not found")
+         
+    base_dir = Path(result_path_str)
+    try:
+        file_path = (base_dir / relative_path).resolve()
+    except Exception:
+        raise HTTPException(400, "Invalid path")
+    
+    # Security: Ensure file is inside the base_dir
+    if not str(file_path).startswith(str(base_dir)):
+        logger.warning(f"Access denied: {file_path} is outside {base_dir}")
+        raise HTTPException(403, "Access denied")
+        
+    if file_path.exists() and file_path.is_file():
+        return FileResponse(file_path)
+        
+    raise HTTPException(404, "File not found")
+
+@app.get("/view_file/{job_id}/{filename}")
+def view_result_single_file(job_id: str, filename: str):
+    """Securely serve a single result file."""
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+        
+    result_path_str = jobs[job_id].get("result_path")
+    if not result_path_str:
+         raise HTTPException(404, "Result path not found")
+         
+    file_path = Path(result_path_str)
+    
+    if file_path.name != filename:
+        raise HTTPException(403, "Access denied")
+        
+    if file_path.exists() and file_path.is_file():
+        return FileResponse(file_path)
+        
+    raise HTTPException(404, "File not found")
+
+@app.post("/open_output_folder/{job_id}")
+def open_output_folder(job_id: str):
+    """Opens the result folder/file in native file explorer."""
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+
+    path_str = jobs[job_id].get("result_path")
+    if not path_str:
+        raise HTTPException(404, "Result path not available")
+        
+    path = Path(path_str)
+    
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["open", "-R", str(path)])
+        elif sys.platform == "win32":
+            subprocess.run(["explore", str(path)])
+        else:
+            folder = path.parent if path.is_file() else path
+            subprocess.run(["xdg-open", str(folder)])
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Failed to open folder: {e}")
+        return {"error": str(e)}
+
+@app.websocket("/ws_heartbeat")
+async def websocket_heartbeat(websocket: WebSocket):
+    await websocket.accept()
+    active_connections.append(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        if websocket in active_connections:
+            active_connections.remove(websocket)
+
+# Mount static files
+app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")
+
+if __name__ == "__main__":
+    import uvicorn
+
+    if "--desktop-mode" in sys.argv:
+        os.environ["LOCTRAN_DESKTOP_MODE"] = "1"
+
+    # Keep runtime flag aligned when launched directly.
+    globals()["DESKTOP_MODE"] = os.getenv("LOCTRAN_DESKTOP_MODE", "0") == "1"
+
+    # Use standard logging config
+    log_config = uvicorn.config.LOGGING_CONFIG
+    log_config["formatters"]["access"]["fmt"] = '%(asctime)s - %(levelname)s - %(message)s'
+
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_config=log_config)

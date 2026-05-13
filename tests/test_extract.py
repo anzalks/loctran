@@ -77,7 +77,7 @@ class TestProcessFileTxt:
         src = _make_txt(tmp_path)
         out = tmp_path / "outputs"
 
-        with patch("extract.detect_langs") as mock_detect:
+        with patch("loctran.extract.detect_langs") as mock_detect:
             mock_detect.return_value = [MagicMock(lang="en")]
             result = _call_process_file(src, out)
 
@@ -88,7 +88,7 @@ class TestProcessFileTxt:
         src = _make_txt(tmp_path)
         out = tmp_path / "outputs"
 
-        with patch("extract.detect_langs") as mock_detect:
+        with patch("loctran.extract.detect_langs") as mock_detect:
             mock_detect.return_value = [MagicMock(lang="en")]
             result = _call_process_file(src, out)
 
@@ -106,7 +106,7 @@ class TestProcessFileTxt:
         out = tmp_path / "outputs"
         calls: list[tuple] = []
 
-        with patch("extract.detect_langs") as mock_detect:
+        with patch("loctran.extract.detect_langs") as mock_detect:
             mock_detect.return_value = [MagicMock(lang="en")]
             _call_process_file(src, out, progress_callback=lambda m, p: calls.append((m, p)))
 
@@ -116,7 +116,7 @@ class TestProcessFileTxt:
         src = _make_txt(tmp_path, content="   \n   ")
         out = tmp_path / "outputs"
 
-        with patch("extract.detect_langs"):
+        with patch("loctran.extract.detect_langs"):
             result = _call_process_file(src, out)
 
         assert result is None
@@ -138,10 +138,10 @@ class TestProcessFilePdf:
         pool_mock.imap.return_value = iter([fake_result])
 
         return {
-            "extract.rasterize_pdf": MagicMock(return_value=[str(p) for p in image_paths]),
-            "extract.multiprocessing.Pool": MagicMock(return_value=pool_mock),
-            "extract.detect_langs": MagicMock(return_value=[MagicMock(lang="en")]),
-            "extract._configure_tesseract_path": MagicMock(),
+            "loctran.extract.rasterize_pdf": MagicMock(return_value=[str(p) for p in image_paths]),
+            "loctran.extract.multiprocessing.Pool": MagicMock(return_value=pool_mock),
+            "loctran.extract.detect_langs": MagicMock(return_value=[MagicMock(lang="en")]),
+            "loctran.extract._configure_tesseract_path": MagicMock(),
         }
 
     def test_pdf_creates_json(self, tmp_path):
@@ -164,7 +164,7 @@ class TestProcessFilePdf:
         src = _make_fake_pdf(tmp_path)
         out = tmp_path / "outputs"
 
-        with patch("extract.rasterize_pdf", side_effect=RuntimeError("bad pdf")):
+        with patch("loctran.extract.rasterize_pdf", side_effect=RuntimeError("bad pdf")):
             result = _call_process_file(src, out)
 
         assert result is None
@@ -200,9 +200,9 @@ class TestProcessFileImage:
         pool_mock.imap.return_value = iter([fake_result])
 
         with _multi_patch({
-            "extract.multiprocessing.Pool": MagicMock(return_value=pool_mock),
-            "extract.detect_langs": MagicMock(return_value=[MagicMock(lang="en")]),
-            "extract._configure_tesseract_path": MagicMock(),
+            "loctran.extract.multiprocessing.Pool": MagicMock(return_value=pool_mock),
+            "loctran.extract.detect_langs": MagicMock(return_value=[MagicMock(lang="en")]),
+            "loctran.extract._configure_tesseract_path": MagicMock(),
         }):
             result = _call_process_file(src, out)
 
@@ -218,7 +218,7 @@ class TestProcessFileImage:
 
 def _call_process_file(src: Path, out: Path, progress_callback=None):
     """Import extract fresh each call (avoids module-level side-effects)."""
-    import extract
+    import loctran.extract as extract
     return extract.process_file(src, out, progress_callback=progress_callback)
 
 
