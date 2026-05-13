@@ -1,0 +1,78 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill out each field as completely as possible.
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: python_version
+    attributes:
+      label: Python version
+      placeholder: "e.g. 3.11.9"
+    validations:
+      required: true
+
+  - type: input
+    id: ollama_version
+    attributes:
+      label: Ollama version
+      placeholder: "e.g. 0.3.1  (run: ollama --version)"
+    validations:
+      required: true
+
+  - type: input
+    id: tesseract_version
+    attributes:
+      label: Tesseract version
+      placeholder: "e.g. 5.3.4  (run: tesseract --version)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor_output
+    attributes:
+      label: loctran-doctor output
+      description: Paste the full output of `loctran-doctor`
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `loctran document.pdf --lang French`
+        2. See error …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: Include the full error message / traceback if applicable
+    validations:
+      required: true

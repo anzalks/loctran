@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 DEBUG_MODE = os.getenv("LOCTRAN_DEBUG")
 logger = logging.getLogger("loctran.translate")
-DEFAULT_MODEL = "qwen2.5:32b"
+DEFAULT_MODEL = "qwen2.5:7b"  # ~4 GB; use qwen2.5:32b for higher quality (requires ~20 GB VRAM)
 DEFAULT_LANG = "French"
 BATCH_SIZE = 5
 
@@ -171,9 +171,9 @@ def _translate_chunk(chunk, model, target_lang):
     return results
 
 
-def translate_segments(segments, model, target_lang):
+def translate_segments(segments, model, target_lang, batch_size: int = BATCH_SIZE):
     """
-    Translates a list of segments, chunked by BATCH_SIZE to avoid context overflow.
+    Translates a list of segments, chunked by *batch_size* to avoid context overflow.
     Input: list of segment dicts with a 'text' key.
     Returns: dict mapping index -> translated_text
     """
@@ -186,17 +186,17 @@ def translate_segments(segments, model, target_lang):
 
     logger.debug(
         f"translate_segments: {len(simple_segments)} segments, "
-        f"chunk_size={BATCH_SIZE}, model='{model}', lang='{target_lang}'"
+        f"chunk_size={batch_size}, model='{model}', lang='{target_lang}'"
     )
 
     results = {}
-    for chunk_idx, chunk_start in enumerate(range(0, len(simple_segments), BATCH_SIZE)):
-        chunk = simple_segments[chunk_start: chunk_start + BATCH_SIZE]
-        logger.debug(f"Processing chunk {chunk_idx+1} ({len(chunk)} segs, ids {chunk[0]['id']}–{chunk[-1]['id']})")
+    for chunk_idx, chunk_start in enumerate(range(0, len(simple_segments), batch_size)):
+        chunk = simple_segments[chunk_start: chunk_start + batch_size]
+        logger.debug(f"Processing chunk {chunk_idx+1} ({len(chunk)} segs, ids {chunk[0]['id']}\u2013{chunk[-1]['id']}")
         chunk_results = _translate_chunk(chunk, model, target_lang)
         results.update(chunk_results)
         # Brief pause between chunks so Ollama doesn't queue-drop under load
-        if chunk_start + BATCH_SIZE < len(simple_segments):
+        if chunk_start + batch_size < len(simple_segments):
             time.sleep(0.5)
 
     total = len(simple_segments)
@@ -301,7 +301,7 @@ def get_overlay_html(width, height, image_url, segments):
     html += "</div>"
     return html
 
-def process_folder(folder_path, lang, model, progress_callback=None):
+def process_folder(folder_path, lang, model, progress_callback=None, batch_size: int = BATCH_SIZE):
     folder_path = Path(folder_path)
     json_path = folder_path / "input_data.json"
     html_path = folder_path / f"{folder_path.name}.html"
@@ -413,9 +413,7 @@ def process_folder(folder_path, lang, model, progress_callback=None):
             segments_to_trans = [s for s in segments if s.get('text', '').strip()]
             if not segments_to_trans:
                 continue
-            translations = translate_segments(segments_to_trans, model, lang)
-            if not translations:
-                logger.warning(f"Slide {slide_num}: no translations returned for text-only slide.")
+            translations = translate_segments(segments_to_trans, model, lang, batch_size=batch_size)
             for idx, s in enumerate(segments_to_trans):
                 s['translation'] = translations.get(idx, "")
 
@@ -453,7 +451,7 @@ def process_folder(folder_path, lang, model, progress_callback=None):
             logger.debug(f"Slide {slide_num}: no translatable segments, skipping translation call.")
             translations = {}
         else:
-            translations = translate_segments(segments_to_trans, model, lang)
+            translations = translate_segments(segments_to_trans, model, lang, batch_size=batch_size)
             if not translations:
                 logger.warning(
                     f"Slide {slide_num}: translate_segments returned empty results for "

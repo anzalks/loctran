@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a new capability or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Please describe your use case clearly so we can understand the value.
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: What problem does this feature solve? Who benefits?
+      placeholder: "As a researcher, I need to translate Word documents because …"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_change
+    attributes:
+      label: Proposed API / CLI change
+      description: What would the interface look like?
+      placeholder: |
+        loctran document.docx --lang German
+        # or a new API endpoint /upload accepting .docx
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds exist today, and why are they insufficient?
+    validations:
+      required: false

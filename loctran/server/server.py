@@ -44,6 +44,7 @@ try:
     from loctran.extract import process_file
     from loctran.translate import process_folder, list_models, check_ollama_connection, DEFAULT_MODEL
     from loctran.server.compress import compress_file, parse_size, format_size
+    from loctran.server.store import init_db, upsert_job, get_job, list_active_jobs, cleanup_old_jobs as _store_cleanup
 except ImportError as e:
     logger.error(f"Failed to import local modules: {e}")
     sys.exit(1)
@@ -57,7 +58,7 @@ class JobStatus:
     FAILED = "failed"
     COMPRESSING = "compressing"
 
-# In-Memory Job Store (Note: Production would use valid persistent storage like SQLite)
+# In-process cache (write-through to SQLite via store.py)
 jobs: Dict[str, dict] = {}
 
 # Lifecycle Management
@@ -70,8 +71,8 @@ JOB_RETENTION_SECONDS = 3600 # 1 Hour
 # Ollama Process Management
 # Track whether Ollama was pre-existing (not spawned by this app)
 ollama_was_preexisting = False
-# Track Ollama process if this app spawns it (future enhancement)
-ollama_process = None
+# Track the subprocess.Popen handle if *this* app spawned Ollama
+_ollama_proc: subprocess.Popen | None = None
 
 # --- Background Tasks ---
 
@@ -82,7 +83,8 @@ def run_pipeline(job_id: str, file_path: Path, lang: str, model: str, original_f
             if job_id in jobs:
                 jobs[job_id]["message"] = msg
                 jobs[job_id]["progress"] = percent
-            
+                upsert_job(jobs[job_id])
+
         jobs[job_id]["status"] = JobStatus.EXTRACTING
         update_progress("Starting extraction...", 0)
         logger.info(f"Job {job_id}: Started extraction for {file_path.name}")
@@ -219,77 +221,69 @@ def heartbeat_monitor():
             cleanup_old_jobs()
 
 def cleanup_old_jobs():
-    """Remove old completed/failed jobs from memory."""
+    """Remove old completed/failed jobs from memory and SQLite store."""
     try:
-        now = time.time()
-        to_delete = []
-        for jid, job in jobs.items():
-            if job["status"] in [JobStatus.COMPLETED, JobStatus.FAILED]:
-                # If created_at is missing (legacy), assume it's old
-                created_at = job.get("created_at", 0)
-                if now - created_at > JOB_RETENTION_SECONDS:
-                    to_delete.append(jid)
-        
-        for jid in to_delete:
-            del jobs[jid]
-            logger.debug(f"Cleaned up old job {jid}")
-            
-        if to_delete:
-            logger.info(f"Cleaned up {len(to_delete)} old jobs")
+        deleted = _store_cleanup(JOB_RETENTION_SECONDS)
+        # Sync the in-process cache
+        terminal = {JobStatus.COMPLETED, JobStatus.FAILED}
+        cutoff = time.time() - JOB_RETENTION_SECONDS
+        for jid in list(jobs.keys()):
+            job = jobs[jid]
+            if job.get("status") in terminal and job.get("created_at", 0) < cutoff:
+                del jobs[jid]
+        if deleted:
+            logger.info(f"Cleaned up {deleted} old jobs")
     except Exception as e:
         logger.error(f"Job cleanup failed: {e}")
 
-def check_ai_engine():
-    """Check Ollama connection in background and track pre-existing state."""
-    global ollama_was_preexisting
-    
-    logger.info("Checking AI Engine (Ollama)...")
+def _start_ollama_if_needed() -> None:
+    """Start Ollama if it is not already running; record whether we started it."""
+    global _ollama_proc, ollama_was_preexisting
     try:
         check_ollama_connection(DEFAULT_MODEL)
-        # If we successfully connect, Ollama is pre-existing (not spawned by us)
+        # Successfully connected — Ollama was already running; leave it alone
         ollama_was_preexisting = True
-        logger.info("Ollama connection verified. (Pre-existing instance)")
-    except Exception as e:
-        logger.warning(f"Ollama check failed: {e}")
-        logger.warning("Ollama must be running on localhost:11434. Use 'loctran-doctor' to diagnose.")
+        logger.info("Ollama is already running (pre-existing instance).")
+    except Exception:
+        logger.info("Ollama not detected — starting 'ollama serve'...")
         ollama_was_preexisting = False
+        _ollama_proc = subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        logger.info(f"Ollama started (PID {_ollama_proc.pid}).")
 
 
-def _stop_ollama():
-    """Gracefully terminate Ollama process if spawned by this app.
-    
-    SAFETY: This function respects pre-existing Ollama instances.
-    - If Ollama was already running before loctran started, we do NOT kill it.
-    - If loctran spawned Ollama via subprocess.Popen, we gracefully terminate only that process.
+def check_ai_engine():
+    """Check Ollama connection in background (called from lifespan thread)."""
+    _start_ollama_if_needed()
+
+
+def _stop_ollama() -> None:
+    """Gracefully terminate Ollama only if *this* process started it.
+
+    SAFETY: If Ollama was already running before loctran launched we leave it
+    completely untouched — no pkill, no terminate.
     """
-    global ollama_process, ollama_was_preexisting
-    
-    try:
-        # Never terminate pre-existing Ollama instances
-        if ollama_was_preexisting:
-            logger.info("Ollama was pre-existing; skipping termination to preserve user's Ollama setup.")
-            return
-        
-        # If this app spawned Ollama, gracefully terminate the specific process
-        if ollama_process is not None:
-            try:
-                logger.info(f"Terminating Ollama process (PID: {ollama_process.pid})...")
-                ollama_process.terminate()
-                ollama_process.wait(timeout=5)
-                logger.info("Ollama terminated gracefully.")
-            except subprocess.TimeoutExpired:
-                logger.warning("Ollama did not terminate gracefully; force killing...")
-                ollama_process.kill()
-                ollama_process.wait()
-            except Exception as e:
-                logger.debug(f"Error terminating Ollama process: {e}")
-            return
-        
-        # No process to terminate and not pre-existing; log and return
+    global _ollama_proc
+
+    if ollama_was_preexisting:
+        logger.info("Ollama was pre-existing; skipping termination.")
+        return
+
+    if _ollama_proc and _ollama_proc.poll() is None:
+        logger.info(f"Terminating Ollama (PID {_ollama_proc.pid})...")
+        _ollama_proc.terminate()
+        try:
+            _ollama_proc.wait(timeout=5)
+            logger.info("Ollama terminated gracefully.")
+        except subprocess.TimeoutExpired:
+            logger.warning("Ollama did not stop in time; force-killing.")
+            _ollama_proc.kill()
+        _ollama_proc = None
+    else:
         logger.debug("No Ollama process to terminate.")
-        
-    except Exception as e:
-        logger.debug(f"Ollama termination attempt: {e}")
 
 # --- FastAPI App ---
 
@@ -297,6 +291,10 @@ def _stop_ollama():
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Server starting up...")
+
+    # Initialise SQLite job store and restore any in-progress jobs
+    init_db()
+    jobs.update({j["id"]: j for j in list_active_jobs()})
 
     # Start background threads
     if DESKTOP_MODE:
@@ -308,7 +306,7 @@ async def lifespan(app: FastAPI):
 
     t_ai = threading.Thread(target=check_ai_engine, daemon=True)
     t_ai.start()
-    
+
     yield
     
     # Shutdown

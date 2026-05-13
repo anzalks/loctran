@@ -1,0 +1,72 @@
+# Contributing to Loctran
+
+Thank you for your interest in contributing! Here's everything you need to get started.
+
+## Development setup
+
+```bash
+git clone https://github.com/anzalks/loctran.git
+cd loctran
+pip install -e ".[ocr,server,test]"
+pip install black isort flake8 mypy pre-commit
+pre-commit install
+```
+
+## Running tests
+
+```bash
+pytest -q
+```
+
+For coverage:
+
+```bash
+pytest --cov=loctran --cov-fail-under=70 -q
+```
+
+## Code style
+
+This project uses **black**, **isort**, and **flake8**. All three run in CI and must pass before a PR is merged.
+
+```bash
+black loctran/
+isort loctran/
+flake8 loctran/
+mypy loctran/ --ignore-missing-imports
+```
+
+## Submitting a PR
+
+**Branch naming**
+
+- `fix/<short-description>` for bug fixes
+- `feat/<short-description>` for new features
+- `docs/<short-description>` for documentation changes
+- `test/<short-description>` for test additions
+
+**PR description template**
+
+```
+## What & Why
+<!-- One paragraph describing the change and the motivation. -->
+
+## How it works
+<!-- Brief technical explanation. -->
+
+## Testing
+<!-- What tests were added or changed? -->
+
+## Checklist
+- [ ] Tests pass (`pytest -q`)
+- [ ] Linting passes (`black --check`, `isort --check-only`, `flake8`)
+- [ ] CHANGELOG.md updated
+- [ ] Docs updated if behaviour changed
+```
+
+## Adding a language or model to the test matrix
+
+The CI matrix is in `.github/workflows/ci.yml`. To add a new language or model to integration tests, add an entry to the `matrix.lang` or `matrix.model` section and add a corresponding mock in `tests/test_translate.py`.
+
+## Questions?
+
+Open a [GitHub Discussion](https://github.com/anzalks/loctran/discussions) — we read everything.

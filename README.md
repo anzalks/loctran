@@ -1,132 +1,159 @@
-# Loctran: Local AI PDF Tools
+# Loctran — private AI PDF translator
 
-**Loctran** is a powerful, privacy-focused desktop application that combines **AI Translation** and **Smart Conversion** for PDF documents. It runs 100% locally on your machine, ensuring your sensitive documents never leave your computer.
+[![CI](https://github.com/anzalks/loctran/actions/workflows/ci.yml/badge.svg)](https://github.com/anzalks/loctran/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/loctran)](https://pypi.org/project/loctran/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![Python](https://img.shields.io/pypi/pyversions/loctran)](https://pypi.org/project/loctran/)
+
+**Translate PDFs locally. No cloud. No API key. Just Ollama.**
 
 <p align="center">
-  <img src="screen_grabs/1.png" width="800" alt="Loctran Dashboard">
+  <img src="screen_grabs/1.png" width="800" alt="Loctran — translated PDF overlay">
 </p>
-<p align="center">
-  <img src="screen_grabs/2.png" width="45%" alt="Translation Overlay">
-  <img src="screen_grabs/3.png" width="45%" alt="Settings">
-</p>
+
+---
+
+## 30-second install
+
+```bash
+pip install loctran
+ollama pull qwen2.5:7b          # one-time, ~4 GB
+loctran document.pdf --lang French
+```
 
 ---
 
 ## Features
 
-### AI Translator
-- **100% Local**: Uses `Ollama` (DeepSeek, Qwen) and `Tesseract` entirely offline.
-- **Commercial Safe**: Uses `pypdfium2` (Apache 2.0/BSD) instead of AGPL tools like Ghostscript.
-- **DeepSeek AI OCR**: Specialized model (`deepseek-ocr:3b`) for handwriting and complex layouts.
-- **Preserves Layout**: Maintains the original paragraph structure and formatting of your PDF.
-- **Auto-Language Detection**: Automatically identifies source languages.
+| What it does | Why it matters |
+|---|---|
+| Rasterises PDFs with pypdfium2 | No Poppler / Ghostscript dependency |
+| Dual-pass OCR (Tesseract + inverted image) | Catches light-on-dark and low-contrast text |
+| Batched LLM translation via Ollama | Works with any local chat model |
+| HTML overlay output | Translations positioned over the original layout |
+| Web UI with real-time progress | Upload and translate from any browser |
+| PDF compression | Reduce file size without proprietary tools |
+| **100 % local — files never leave your machine** | Full privacy, no API keys, works offline |
 
-### PDF Converter
-- **Smart Compression**: Reduce PDF file size (e.g., 20MB -> 1MB) with adjustable quality.
-- **Format Conversion**: Convert PDF pages to high-quality images (JPG/PNG).
-- **Batch Processing**: Handle large files efficiently.
+---
 
-### Modern Experience
-- **Mobile Ready**: Fully responsive web UI that works on phone/tablet browsers.
-- **PWA Support**: Installable as a progressive web app.
-- **Native Integration**: Uses system file pickers (macOS Finder, Windows Explorer) for saving files.
+## How it works
+
+```
+PDF
+ └─► rasterise pages (pypdfium2)
+      └─► dual-pass OCR (Tesseract normal + inverted)
+           └─► deduplicate & group words into segments
+                └─► batch translate (Ollama LLM)
+                     └─► HTML overlay output
+```
+
+Each page becomes an image with absolutely-positioned translation boxes sized to match the original text bounding boxes. For PDFs with a digital text layer, pdfplumber extracts text directly — no OCR needed.
 
 ---
 
 ## Requirements
 
-1.  **Python 3.9+**
-2.  **Ollama** (Required for AI features) -> [Download Here](https://ollama.com/)
-    *   *Note*: The app will automatically pull required models on first use.
-3.  **System Tools** (Tesseract):
-    *   *macOS*: `brew install tesseract tesseract-lang`
-    *   *Linux*: `apt-get install tesseract-ocr`
-    *   *Windows*: Install Tesseract binary and add to PATH.
-    *   *(Note: Ghostscript and Poppler are NO LONGER REQUIRED, making this fully commercial-friendly)*
+- **OS**: macOS, Linux, or Windows
+- **Python** ≥ 3.9
+- **Ollama** running locally — [download](https://ollama.com/download)
+- **Tesseract** — `brew install tesseract tesseract-lang` (macOS) or `apt install tesseract-ocr tesseract-ocr-all` (Linux)
 
----
+Run `loctran-doctor` to check everything at once:
 
-## Installation
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/anzalks/loctran.git
-cd loctran
-
-# 2. Install Python dependencies
-pip install -e ".[ocr,server]"
-
-# 3. Ensure system tools are installed (see Requirements above)
 ```
-
-**Install extras individually:**
-```bash
-pip install -e ".[ocr]"     # OCR/PDF extraction only (Tesseract, pdfplumber, pypdfium2)
-pip install -e ".[server]"  # Web server only (FastAPI, uvicorn)
-pip install -e ".[test]"    # Run the test suite
+loctran-doctor v0.1.1b1
+─────────────────────────────────────
+✓  Python         3.11.9
+✓  Tesseract      5.3.4  (langs: eng fra deu jpn +47)
+✓  Ollama         0.3.1  (running)
+✓  qwen2.5:7b     pulled (4.1 GB)
+✗  qwen2.5:32b    NOT pulled  →  ollama pull qwen2.5:32b
+─────────────────────────────────────
+All required dependencies satisfied.
 ```
 
 ---
 
-## Usage (Web App)
+## Web UI
 
-The recommended way to use Loctran is via the modern web interface.
+Start the server and open your browser:
 
-1.  **Start the Server**:
-    ```bash
-    python app/server.py
-    ```
+```bash
+loctran-server
+# → http://localhost:8000
+```
 
-2.  **Open in Browser**:
-    Go to **[http://localhost:8000](http://localhost:8000)**
+<p align="center">
+  <img src="screen_grabs/2.png" width="720" alt="Loctran web UI">
+</p>
 
-3.  **Use**:
-    -   **Translator**: Drag & drop a PDF, choose a model (Qwen/DeepSeek), and click Start.
-    -   **Converter**: Switch to Converter tab, drop files, choose target size (e.g. 500KB) or format.
-
-4.  **Desktop Auto-Shutdown (Optional)**:
-    Auto-shutdown is disabled by default for headless/server use. To enable desktop-style shutdown behavior, start with:
-    ```bash
-    python app/server.py --desktop-mode
-    ```
+Upload a PDF, choose a target language and model, then watch the real-time progress bar. The translated HTML opens automatically when done.
 
 ---
 
-## CLI Usage
+## CLI reference
 
-For power users who prefer the terminal:
+```
+usage: loctran [-h] [--lang LANG] [--model MODEL] [--output OUTPUT]
+               [--batch-size N] [--extract-only] [--force-ocr] [--use-ai-ocr]
+               input_path
+
+positional arguments:
+  input_path        Path to PDF file or folder containing PDFs
+
+options:
+  --lang LANG       Target language (default: French)
+  --model MODEL     Ollama model (default: qwen2.5:7b)
+  --output OUTPUT   Custom output directory
+  --batch-size N    Segments per translation batch (default: 5)
+  --extract-only    Run only OCR — skip translation
+  --force-ocr       Ignore digital text layer, force fresh OCR
+  --use-ai-ocr      Use a vision model for OCR instead of Tesseract
+```
 
 ```bash
-# Translate a file
-python main.py "path/to/doc.pdf" --lang French
+# Translate to Spanish using a larger model
+loctran report.pdf --lang Spanish --model qwen2.5:32b
 
-# Batch translate folder
-python main.py "path/to/folder" --model qwen2.5:7b
+# Extract text only, save to custom folder
+loctran scan.pdf --extract-only --output ~/Desktop/extracted
+
+# Use smaller batches to avoid context overflow on long documents
+loctran book.pdf --lang German --batch-size 3
 ```
 
 ---
 
-## Diagnostics
+## FAQ
 
-Run a quick environment check before first use:
+**Does this send my documents anywhere?**
+No. Everything runs locally on your machine. Loctran talks only to Ollama at `localhost:11434`. No telemetry, no analytics, no cloud.
 
-```bash
-loctran-doctor
-```
+**Which Ollama models work?**
+Any chat model. `qwen2.5:7b` (~4 GB) is the recommended default — good quality on most machines. For higher accuracy on complex documents try `qwen2.5:32b` (~20 GB). Pull a model with `ollama pull <model>`.
 
-This checks whether:
-- `tesseract` is available in PATH
-- `ollama` is reachable at `localhost:11434`
-
-## Privacy & Security
-
--   **Files**: Uploaded files are processed in a temporary directory and cleaned up immediately after processing.
--   **Network**: The server binds to `localhost` by default. No data is sent to the cloud.
--   **Models**: All AI models run locally via Ollama.
+**What about scanned PDFs?**
+Loctran automatically detects whether a PDF has a digital text layer. If it does, pdfplumber extracts text directly (fast, accurate). If not — or if you pass `--force-ocr` — Tesseract runs a dual-pass OCR (normal + inverted image) to catch light-on-dark text. Pass `--use-ai-ocr` to route OCR through an Ollama vision model for the highest accuracy on complex layouts.
 
 ---
 
+## Docker
+
+```bash
+docker run -p 8000:8000 -v ~/Documents:/docs ghcr.io/anzalks/loctran
+```
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, running tests, and submitting PRs.
+
+---
 
 ## License
 
-Licensed under the Apache License, Version 2.0.
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+
+Apache 2.0 — © 2026 Anzal KS

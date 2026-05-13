@@ -197,3 +197,215 @@ class TestTranslateChunkInternal:
             result = _translate_chunk([], model="test-model", target_lang="French")
         # Empty chunk → no LLM call required (the function may call or not call)
         assert isinstance(result, dict)
+
+
+# ---------------------------------------------------------------------------
+# Section 4-B: additional tests
+# ---------------------------------------------------------------------------
+
+class TestTranslateSegmentsBatchFallback:
+    def test_first_call_raises_then_sequential_succeeds(self):
+        """If the batch call raises, per-segment sequential calls should succeed."""
+        segs = [_segment("Hello"), _segment("World")]
+
+        call_count = 0
+
+        def _side_effect(model, messages, **kw):
+            nonlocal call_count
+            call_count += 1
+            content = messages[0]["content"]
+            if "Input:" in content:
+                # Batch call — fail it
+                raise ConnectionError("Ollama timeout")
+            # Sequential per-segment calls succeed
+            if "Hello" in content:
+                return {"message": {"content": "Bonjour"}}
+            return {"message": {"content": "Monde"}}
+
+        with patch("loctran.translate._get_ollama") as mock_get_ollama:
+            mock_get_ollama.return_value = MagicMock(chat=MagicMock(side_effect=_side_effect))
+            with patch("loctran.translate.time.sleep"):
+                from loctran.translate import translate_segments
+                result = translate_segments(segs, model="test-model", target_lang="French")
+
+        assert len(result) == 2
+
+
+class TestExtractJsonArrayStrategies:
+    @pytest.mark.parametrize("content,expected", [
+        # Strategy 1: ```json fence
+        ('```json\n[{"id":0,"translation":"Hi"}]\n```',
+         [{"id": 0, "translation": "Hi"}]),
+        # Strategy 2: generic ``` fence
+        ('```\n[{"id":0,"translation":"Hi"}]\n```',
+         [{"id": 0, "translation": "Hi"}]),
+        # Strategy 3: bare array in text
+        ('Some text [{"id":0,"translation":"Hi"}] more text',
+         [{"id": 0, "translation": "Hi"}]),
+        # Strategy 4: raw JSON
+        ('[{"id":0,"translation":"Hi"}]',
+         [{"id": 0, "translation": "Hi"}]),
+        # Strategy 5: Python literal with single quotes
+        ("[{'id': 0, 'translation': 'Hi'}]",
+         [{"id": 0, "translation": "Hi"}]),
+    ])
+    def test_strategy(self, content, expected):
+        from loctran.translate import _extract_json_array
+        result = _extract_json_array(content)
+        assert result == expected
+
+
+class TestTranslateEmptySegments:
+    def test_empty_returns_empty_dict_no_ollama_call(self):
+        with patch("loctran.translate._get_ollama") as mock_get_ollama:
+            from loctran.translate import translate_segments
+            result = translate_segments([], model="test-model", target_lang="French")
+
+        mock_get_ollama.assert_not_called()
+        assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Tests: get_overlay_html
+# ---------------------------------------------------------------------------
+
+class TestGetOverlayHtml:
+    def test_returns_html_string(self):
+        from loctran.translate import get_overlay_html
+        html = get_overlay_html(800, 600, "images/page_1.png", [])
+        assert "<img" in html
+        assert "overlay-container" in html
+
+    def test_segments_with_translation_appear(self):
+        from loctran.translate import get_overlay_html
+        seg = {
+            "bbox": [10, 20, 100, 40],
+            "text": "Hello",
+            "translation": "Bonjour",
+        }
+        html = get_overlay_html(800, 600, "images/page_1.png", [seg])
+        assert "Bonjour" in html
+        assert "translated-box" in html
+
+    def test_segment_without_translation_skipped(self):
+        from loctran.translate import get_overlay_html
+        seg = {"bbox": [10, 20, 100, 40], "text": "Hello"}
+        html = get_overlay_html(800, 600, "images/page_1.png", [seg])
+        # No translated box should appear
+        assert "translated-box" not in html
+
+    def test_zero_height_handled(self):
+        from loctran.translate import get_overlay_html
+        html = get_overlay_html(800, 0, "images/page_1.png", [])
+        assert html  # should not crash
+
+    def test_segment_with_min_word_height(self):
+        from loctran.translate import get_overlay_html
+        seg = {
+            "bbox": [10, 20, 100, 40],
+            "text": "Hello",
+            "translation": "Bonjour",
+            "min_word_height": 15,
+        }
+        html = get_overlay_html(800, 600, "images/page_1.png", [seg])
+        assert "Bonjour" in html
+
+
+# ---------------------------------------------------------------------------
+# Tests: check_ollama_connection and list_models
+# ---------------------------------------------------------------------------
+
+class TestCheckOllamaConnection:
+    def test_returns_true_when_list_succeeds(self):
+        from loctran.translate import check_ollama_connection
+        mock_ollama = MagicMock()
+        mock_ollama.list.return_value = {"models": []}
+        with patch("loctran.translate._get_ollama", return_value=mock_ollama):
+            result = check_ollama_connection("any-model")
+        assert result is True
+
+    def test_returns_false_when_list_fails(self):
+        from loctran.translate import check_ollama_connection
+        mock_ollama = MagicMock()
+        mock_ollama.list.side_effect = ConnectionError("no ollama")
+        with patch("loctran.translate._get_ollama", return_value=mock_ollama):
+            result = check_ollama_connection("any-model")
+        assert result is False
+
+
+class TestListModels:
+    def test_returns_model_names(self):
+        from loctran.translate import list_models
+        mock_ollama = MagicMock()
+        mock_ollama.list.return_value = {"models": [{"model": "qwen2.5:7b"}, {"model": "llama3:8b"}]}
+        with patch("loctran.translate._get_ollama", return_value=mock_ollama):
+            result = list_models()
+        assert "qwen2.5:7b" in result
+        assert "llama3:8b" in result
+
+    def test_returns_default_on_error(self):
+        from loctran.translate import list_models, DEFAULT_MODEL
+        mock_ollama = MagicMock()
+        mock_ollama.list.side_effect = RuntimeError("down")
+        with patch("loctran.translate._get_ollama", return_value=mock_ollama):
+            result = list_models()
+        assert DEFAULT_MODEL in result
+
+
+# ---------------------------------------------------------------------------
+# Tests: process_folder
+# ---------------------------------------------------------------------------
+
+class TestProcessFolder:
+    def _write_input_data(self, folder: "Path", slides: list) -> None:
+        import json
+        (folder / "input_data.json").write_text(json.dumps(slides))
+
+    def test_aborts_when_no_json(self, tmp_path):
+        """process_folder should return None when input_data.json is missing."""
+        from loctran.translate import process_folder
+        with patch("loctran.translate.check_ollama_connection", return_value=True):
+            result = process_folder(tmp_path, "French", "qwen2.5:7b")
+        assert result is None  # returns None after logging error
+
+    def test_aborts_when_ollama_unreachable(self, tmp_path):
+        from loctran.translate import process_folder
+        self._write_input_data(tmp_path, [])
+        with patch("loctran.translate.check_ollama_connection", return_value=False):
+            import pytest as _pytest
+            with _pytest.raises(RuntimeError):
+                process_folder(tmp_path, "French", "qwen2.5:7b")
+
+    def test_empty_slides_produces_html(self, tmp_path):
+        """Empty slide list should produce an html file."""
+        from loctran.translate import process_folder
+        self._write_input_data(tmp_path, [])
+        with patch("loctran.translate.check_ollama_connection", return_value=True):
+            process_folder(tmp_path, "French", "qwen2.5:7b")
+        html_files = list(tmp_path.glob("*.html"))
+        assert len(html_files) == 1
+
+    def test_text_only_slide_produces_html(self, tmp_path):
+        """A text-only slide (no img_path) should be rendered into HTML."""
+        from loctran.translate import process_folder
+        slides = [
+            {
+                "slide_num": 1,
+                "image_path": None,
+                "segments": [{"text": "Hello world", "bbox": [0, 0, 100, 20]}],
+            }
+        ]
+        self._write_input_data(tmp_path, slides)
+        mock_ollama = MagicMock()
+        mock_ollama.chat.return_value = {
+            "message": {"content": '[{"id":0,"translation":"Bonjour monde"}]'}
+        }
+        with (
+            patch("loctran.translate.check_ollama_connection", return_value=True),
+            patch("loctran.translate._get_ollama", return_value=mock_ollama),
+            patch("loctran.translate.time.sleep"),
+        ):
+            process_folder(tmp_path, "French", "qwen2.5:7b")
+        html = (tmp_path / f"{tmp_path.name}.html").read_text()
+        assert "Hello world" in html
+

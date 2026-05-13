@@ -19,7 +19,15 @@ classifiers = [
   "License :: OSI Approved :: Apache Software License",
   "Operating System :: OS Independent",
   "Intended Audience :: End Users/Desktop",
+  "Intended Audience :: Science/Research",
   "Topic :: Text Processing :: Linguistic",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Office/Business",
+  "Environment :: Web Environment",
+]
+keywords = [
+  "pdf", "translation", "ocr", "ollama", "local-ai",
+  "privacy", "offline", "tesseract", "document",
 ]
 dependencies = [
   "tqdm",
@@ -28,6 +36,7 @@ dependencies = [
   "Pillow",
   "requests",
   "fpdf",
+  "rich",
 ]
 
 [project.urls]
@@ -47,6 +56,9 @@ server = [
 ]
 test = [
   "pytest",
+  "pytest-cov",
+  "httpx",
+  "mypy",
 ]
 
 [project.scripts]
