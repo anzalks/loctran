@@ -1,0 +1,1 @@
+"""Loctran app package."""

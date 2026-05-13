@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Mac
+.DS_Store
+
+# Data Inputs (No PDFs, Docs, Images)
+*.pdf
+*.doc
+*.docx
+*.jpg
+*.jpeg
+*.png
+*.gif
+
+
+# Data Outputs and User Data (CRITICAL: Prevent data leaks)
+uploads/
+outputs/
+images/
+converted_html/
+converted_images/
+translation_report.html
+*.html
+!app/static/*.html
+!outputs/**/*.html
+
+# User-specific translation/conversion data directories
+# (These are created in user's home directory and should never be committed)
+~/Documents/Loctran_Translations/
+~/Documents/Loctran_Conversions/
+
+
+# IDEs
+.vscode/
+.idea/

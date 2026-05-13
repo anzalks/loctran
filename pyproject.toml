@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "loctran"
+version = "0.0.1"
+description = "Local-first document translation and conversion toolkit"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Anzal KS" }]
+license = { text = "Apache-2.0" }
+dependencies = [
+  "tqdm",
+  "langdetect",
+  "markdown",
+  "Pillow",
+  "requests",
+  "fpdf",
+]
+
+[project.optional-dependencies]
+ocr = [
+  "pytesseract",
+  "pdfplumber",
+  "pypdfium2",
+]
+server = [
+  "fastapi",
+  "uvicorn",
+  "python-multipart",
+]
+test = [
+  "pytest",
+]
+
+[project.scripts]
+loctran = "main:cli_entry"
+loctran-doctor = "app.diagnostics:run_doctor"
+
+[tool.setuptools]
+packages = ["app"]
+py-modules = ["launcher", "extract", "translate", "main", "verify_pipeline"]
