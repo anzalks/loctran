@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loctran</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#667eea">
+    <link rel="apple-touch-icon" href="logo.png">
+</head>
+
+<body>
+
+    <div class="app-container">
+        <!-- Landing Page (New) -->
+        <div id="landing-page">
+            <div class="app-header">
+                <img src="logo.png" alt="Loctran Logo" style="height: 120px; margin-bottom: 0.5rem;">
+                <p>Private, Local, & Powerful PDF Tools</p>
+            </div>
+
+            <div class="feature-cards">
+                <!-- Translator Card -->
+                <div class="feature-card" onclick="navigateTo('translator')">
+                    <div class="card-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M4 5h7"></path>
+                            <path d="M7.5 5v-.5A1.5 1.5 0 0 1 9 3"></path>
+                            <path d="M4 5c0 4 2.5 6 5 8"></path>
+                            <path d="M11 5c0 3-1.5 5-3.5 7"></path>
+                            <path d="M13.5 18h7"></path>
+                            <path d="M17 14l3.5 7"></path>
+                            <path d="M14 21l3-7"></path>
+                            <path d="M10 12l3 3"></path>
+                        </svg>
+                    </div>
+                    <h3>Translator</h3>
+                    <p>Translate PDFs locally preserving layout.</p>
+                </div>
+
+                <!-- Converter Card -->
+                <div class="feature-card" onclick="navigateTo('converter')">
+                    <div class="card-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 9l-5 5-5-5M12 12.8V2.5" />
+                        </svg>
+                    </div>
+                    <h3>Converter</h3>
+                    <p>Compress PDFs and convert formats.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Translator / Converter Header (Hidden initially) -->
+        <div id="feature-header" style="display: none;">
+            <button onclick="navigateTo('landing')"
+                style="background:none; border:none; cursor:pointer; font-size:1.5rem; position:absolute; left:20px; top:20px;">
+                ←
+            </button>
+            <div class="app-header">
+                <img src="logo.png" alt="Loctran Logo" style="height: 80px; margin-bottom: 0.2rem;">
+                <p id="feature-title">PDF Translator</p>
+            </div>
+        </div>
+
+        <!-- Step 1: Upload (Smart Drag & Drop) - Shared UI but differentiated by logic -->
+        <div id="upload-section" style="display: none;">
+
+            <div class="upload-zone" id="drop-zone">
+                <div class="upload-icon">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                </div>
+                <div class="upload-text">Drag & Drop PDF / Image here</div>
+                <div class="upload-subtext">Processed files will be saved to the same directory.</div>
+                <input type="file" id="file-input" accept=".pdf,.jpg,.jpeg,.png" style="display: none;">
+            </div>
+
+            <p id="file-name"
+                style="color: var(--accent-color); font-weight: 600; margin-bottom: 1rem; display: none; margin-top: 1rem; text-align: center;">
+            </p>
+
+            <!-- Translator Specific Controls -->
+            <div id="translator-controls" class="controls">
+                <div id="startup-warning-banner" class="startup-warning-banner" style="display: none; grid-column: 1 / -1;">
+                    <div>
+                        <strong>Large model warning</strong>
+                        <div>This machine may run better with a smaller translation model.</div>
+                    </div>
+                    <button type="button" id="dismiss-startup-warning">Dismiss</button>
+                </div>
+
+                <!-- Line 1: Translation Model -->
+                <div class="control-group" style="grid-column: 1 / -1;">
+                    <label for="translate-model">Translation Model</label>
+                    <select id="translate-model">
+                        <option value="">Loading models…</option>
+                    </select>
+                </div>
+
+                <!-- Line 2: Target Language -->
+                <div class="control-group" style="grid-column: 1 / -1;">
+                    <label for="lang-select">Target Language</label>
+                    <select id="lang-select">
+                        <option value="Afrikaans">Afrikaans</option>
+                        <option value="Albanian">Albanian</option>
+                        <option value="Amharic">Amharic</option>
+                        <option value="Arabic">Arabic</option>
+                        <option value="Armenian">Armenian</option>
+                        <option value="Azerbaijani">Azerbaijani</option>
+                        <option value="Basque">Basque</option>
+                        <option value="Belarusian">Belarusian</option>
+                        <option value="Bengali">Bengali</option>
+                        <option value="Bosnian">Bosnian</option>
+                        <option value="Bulgarian">Bulgarian</option>
+                        <option value="Catalan">Catalan</option>
+                        <option value="Cebuano">Cebuano</option>
+                        <option value="Chinese (Simplified)">Chinese (Simplified)</option>
+                        <option value="Chinese (Traditional)">Chinese (Traditional)</option>
+                        <option value="Corsican">Corsican</option>
+                        <option value="Croatian">Croatian</option>
+                        <option value="Czech">Czech</option>
+                        <option value="Danish">Danish</option>
+                        <option value="Dutch">Dutch</option>
+                        <option value="English" selected>English</option>
+                        <option value="Esperanto">Esperanto</option>
+                        <option value="Estonian">Estonian</option>
+                        <option value="Finnish">Finnish</option>
+                        <option value="French">French</option>
+                        <option value="Frisian">Frisian</option>
+                        <option value="Galician">Galician</option>
+                        <option value="Georgian">Georgian</option>
+                        <option value="German">German</option>
+                        <option value="Greek">Greek</option>
+                        <option value="Gujarati">Gujarati</option>
+                        <option value="Haitian Creole">Haitian Creole</option>
+                        <option value="Hausa">Hausa</option>
+                        <option value="Hawaiian">Hawaiian</option>
+                        <option value="Hebrew">Hebrew</option>
+                        <option value="Hindi">Hindi</option>
+                        <option value="Hmong">Hmong</option>
+                        <option value="Hungarian">Hungarian</option>
+                        <option value="Icelandic">Icelandic</option>
+                        <option value="Igbo">Igbo</option>
+                        <option value="Indonesian">Indonesian</option>
+                        <option value="Irish">Irish</option>
+                        <option value="Italian">Italian</option>
+                        <option value="Japanese">Japanese</option>
+                        <option value="Javanese">Javanese</option>
+                        <option value="Kannada">Kannada</option>
+                        <option value="Kazakh">Kazakh</option>
+                        <option value="Khmer">Khmer</option>
+                        <option value="Kinyarwanda">Kinyarwanda</option>
+                        <option value="Korean">Korean</option>
+                        <option value="Kurdish">Kurdish</option>
+                        <option value="Kyrgyz">Kyrgyz</option>
+                        <option value="Lao">Lao</option>
+                        <option value="Latin">Latin</option>
+                        <option value="Latvian">Latvian</option>
+                        <option value="Lithuanian">Lithuanian</option>
+                        <option value="Luxembourgish">Luxembourgish</option>
+                        <option value="Macedonian">Macedonian</option>
+                        <option value="Malagasy">Malagasy</option>
+                        <option value="Malay">Malay</option>
+                        <option value="Malayalam">Malayalam</option>
+                        <option value="Maltese">Maltese</option>
+                        <option value="Maori">Maori</option>
+                        <option value="Marathi">Marathi</option>
+                        <option value="Mongolian">Mongolian</option>
+                        <option value="Myanmar (Burmese)">Myanmar (Burmese)</option>
+                        <option value="Nepali">Nepali</option>
+                        <option value="Norwegian">Norwegian</option>
+                        <option value="Nyanja (Chichewa)">Nyanja (Chichewa)</option>
+                        <option value="Odia (Oriya)">Odia (Oriya)</option>
+                        <option value="Pashto">Pashto</option>
+                        <option value="Persian">Persian</option>
+                        <option value="Polish">Polish</option>
+                        <option value="Portuguese">Portuguese</option>
+                        <option value="Punjabi">Punjabi</option>
+                        <option value="Romanian">Romanian</option>
+                        <option value="Russian">Russian</option>
+                        <option value="Samoan">Samoan</option>
+                        <option value="Scots Gaelic">Scots Gaelic</option>
+                        <option value="Serbian">Serbian</option>
+                        <option value="Sesotho">Sesotho</option>
+                        <option value="Shona">Shona</option>
+                        <option value="Sindhi">Sindhi</option>
+                        <option value="Sinhala">Sinhala</option>
+                        <option value="Slovak">Slovak</option>
+                        <option value="Slovenian">Slovenian</option>
+                        <option value="Somali">Somali</option>
+                        <option value="Spanish">Spanish</option>
+                        <option value="Sundanese">Sundanese</option>
+                        <option value="Swahili">Swahili</option>
+                        <option value="Swedish">Swedish</option>
+                        <option value="Tagalog (Filipino)">Tagalog (Filipino)</option>
+                        <option value="Tajik">Tajik</option>
+                        <option value="Tamil">Tamil</option>
+                        <option value="Tatar">Tatar</option>
+                        <option value="Telugu">Telugu</option>
+                        <option value="Thai">Thai</option>
+                        <option value="Turkish">Turkish</option>
+                        <option value="Turkmen">Turkmen</option>
+                        <option value="Ukrainian">Ukrainian</option>
+                        <option value="Urdu">Urdu</option>
+                        <option value="Uyghur">Uyghur</option>
+                        <option value="Uzbek">Uzbek</option>
+                        <option value="Vietnamese">Vietnamese</option>
+                        <option value="Welsh">Welsh</option>
+                        <option value="Xhosa">Xhosa</option>
+                        <option value="Yiddish">Yiddish</option>
+                        <option value="Yoruba">Yoruba</option>
+                        <option value="Zulu">Zulu</option>
+                    </select>
+                </div>
+
+                <!-- Line 3: Vision OCR checkbox + conditional OCR model picker -->
+                <div style="grid-column: 1 / -1; margin-top: 5px; padding: 10px; background: #f8fafc; border-radius: 6px;">
+                    <label style="display: flex; align-items: center; gap: 10px; font-weight: 500; cursor: pointer;">
+                        <input type="checkbox" id="ai-ocr-checkbox" onchange="toggleVisionRow()">
+                        <span style="font-size: 0.95rem;">Use Vision Model for OCR</span>
+                    </label>
+                    <div id="vision-row" style="display:none; margin-top: 8px;">
+                        <div class="control-group">
+                            <label for="vision-model">OCR Model</label>
+                            <select id="vision-model">
+                                <option value="">Loading models…</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Converter Specific Controls -->
+
+            <div id="converter-controls" class="controls" style="display: none;">
+                <div class="control-group">
+                    <label>Target Size</label>
+                    <div style="display:flex; gap:4px;">
+                        <input type="number" id="size-input" value="200" min="1" style="flex:1;">
+                        <select id="size-unit" style="width:75px;">
+                            <option value="KB" selected>KB</option>
+                            <option value="MB">MB</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label for="format-select">Format</label>
+                    <select id="format-select">
+                        <option value="pdf" selected>PDF (Compress)</option>
+                        <option value="jpg">JPG (Convert)</option>
+                        <option value="png">PNG (Convert)</option>
+                    </select>
+                </div>
+            </div>
+
+            <button id="start-btn" class="btn-primary" disabled>Translate</button>
+        </div>
+
+        <!-- Step 2: Progress -->
+        <div class="progress-container" id="progress-section">
+            <div class="progress-bar-bg">
+                <div class="progress-bar-fill" id="progress-fill"></div>
+            </div>
+            <div class="status-text" id="status-text">Initializing...</div>
+        </div>
+
+        <!-- Step 3: Result -->
+        <div class="result-container" id="result-section">
+            <div class="success-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#48bb78" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                </svg>
+            </div>
+            <h3>Processed Successfully!</h3>
+            <p id="result-desc">Your document is ready.</p>
+
+            <!-- Result Actions -->
+            <a id="result-link" href="#" target="_blank" class="btn-primary"
+                style="display: inline-block; text-decoration: none; margin-top: 1rem;">View Result</a>
+            <button id="finder-btn" class="btn-primary" style="background: #4a5568;">Show in Finder</button>
+            <br><br>
+            <button onclick="location.reload()"
+                style="background:none; border:none; color: var(--text-muted); cursor: pointer; text-decoration: underline;">Start
+                Over</button>
+        </div>
+
+    </div>
+
+    <script>
+        // WebSocket Heartbeat (Keeps server alive while browser is open)
+        let heartbeatWs = null;
+        let heartbeatInterval = null;
+
+        function setupWebSocket() {
+            const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+            heartbeatWs = new WebSocket(`${proto}://${window.location.host}/ws_heartbeat`);
+
+            heartbeatWs.onopen = () => {
+                console.log("[INFO] Connected to server.");
+                heartbeatInterval = setInterval(() => {
+                    if (heartbeatWs && heartbeatWs.readyState === WebSocket.OPEN) heartbeatWs.send("ping");
+                }, 30000);
+            };
+
+            heartbeatWs.onclose = () => {
+                if (heartbeatInterval) {
+                    clearInterval(heartbeatInterval);
+                    heartbeatInterval = null;
+                }
+                console.log("[WARN] Disconnected from server.");
+            };
+
+            heartbeatWs.onerror = (err) => {
+                console.error("WebSocket error:", err);
+            };
+        }
+
+        setupWebSocket();
+
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const fileNameDisplay = document.getElementById('file-name');
+        const startBtn = document.getElementById('start-btn');
+        const startupWarningBanner = document.getElementById('startup-warning-banner');
+        const startupInfoPromise = fetch('/api/startup-info')
+            .then(async (res) => {
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return res.json();
+            })
+            .catch((error) => {
+                console.warn('[startup-info] failed:', error);
+                return null;
+            });
+
+        let selectedFile = null;
+        let jobId = null;
+        let currentMode = null; // 'translator' or 'converter'
+        let startupWarningDismissed = false;
+
+        document.getElementById('dismiss-startup-warning').addEventListener('click', () => {
+            startupWarningDismissed = true;
+            startupWarningBanner.style.display = 'none';
+        });
+
+        startupInfoPromise.then((startupInfo) => {
+            if (!startupInfo) return;
+            if (startupInfo.large_model_warning && !startupWarningDismissed) {
+                startupWarningBanner.style.display = 'flex';
+            }
+        });
+
+        // Navigation Logic
+        function navigateTo(mode) {
+            const landing = document.getElementById('landing-page');
+            const header = document.getElementById('feature-header');
+            const upload = document.getElementById('upload-section');
+            const result = document.getElementById('result-section');
+            const title = document.getElementById('feature-title');
+
+            // Reset
+            result.style.display = 'none'; // Hide result if going back
+            document.getElementById('progress-section').style.display = 'none';
+
+            if (mode === 'landing') {
+                landing.style.display = 'block';
+                header.style.display = 'none';
+                upload.style.display = 'none';
+                currentMode = null;
+            } else {
+                landing.style.display = 'none';
+                header.style.display = 'block';
+                upload.style.display = 'block';
+                currentMode = mode;
+
+                // Toggle Specific Controls
+                const transControls = document.getElementById('translator-controls');
+                const convControls = document.getElementById('converter-controls');
+
+                if (mode === 'translator') {
+                    title.textContent = "PDF Translator";
+                    transControls.style.display = 'grid';
+                    convControls.style.display = 'none';
+                    startBtn.textContent = "Start Translation";
+                    loadModels();
+                } else {
+                    title.textContent = "PDF Converter";
+                    transControls.style.display = 'none';
+                    convControls.style.display = 'grid';
+                    startBtn.textContent = "Start Conversion";
+                }
+            }
+        }
+
+        // 1. Fetch & populate model dropdowns from Ollama
+        async function loadModels() {
+            const translateSel = document.getElementById('translate-model');
+            const visionSel = document.getElementById('vision-model');
+
+            translateSel.innerHTML = '<option value="">Loading…</option>';
+            visionSel.innerHTML = '<option value="">Loading…</option>';
+
+            try {
+                const res = await fetch('/api/models');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const models = data.models || [];
+                console.log('[loadModels] received', models.length, 'models:', models);
+
+                translateSel.innerHTML = '';
+                visionSel.innerHTML = '';
+
+                if (models.length === 0) {
+                    translateSel.innerHTML = '<option value="">No models found — is Ollama running?</option>';
+                    visionSel.innerHTML = '<option value="">No models found</option>';
+                    return;
+                }
+
+                models.forEach(m => {
+                    const name = m.name || '';
+                    if (!name) return;
+
+                    const optT = document.createElement('option');
+                    optT.value = name;
+                    optT.textContent = name;
+                    translateSel.appendChild(optT);
+
+                    const optV = document.createElement('option');
+                    optV.value = name;
+                    optV.textContent = name;
+                    visionSel.appendChild(optV);
+                });
+
+                const startupInfo = await startupInfoPromise;
+
+                // Auto-select preferred defaults
+                const recommendedModel = startupInfo?.recommended_model || '';
+                if (recommendedModel && models.some((m) => m.name === recommendedModel)) {
+                    translateSel.value = recommendedModel;
+                } else {
+                    const tDef = models.find(m => m.name && m.name.toLowerCase().includes('translategemma'));
+                    if (tDef) translateSel.value = tDef.name;
+                }
+
+                const vDef = models.find(m => m.name && m.name.toLowerCase().includes('glm-ocr'));
+                if (vDef) visionSel.value = vDef.name;
+
+                if (startupInfo?.large_model_warning && !startupWarningDismissed) {
+                    startupWarningBanner.style.display = 'flex';
+                }
+
+            } catch (e) {
+                console.error('[loadModels] failed:', e);
+                translateSel.innerHTML = '<option value="">Error — check console</option>';
+                visionSel.innerHTML = '<option value="">Error — check console</option>';
+            }
+        }
+
+        function toggleVisionRow() {
+            const row = document.getElementById('vision-row');
+            row.style.display = document.getElementById('ai-ocr-checkbox').checked ? 'block' : 'none';
+        }
+
+        // 2. File Handling
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if (fileInput.files.length) handleFile(fileInput.files[0]);
+        });
+
+        function handleFile(file) {
+            const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png'];
+            if (!allowedTypes.includes(file.type)) {
+                alert('Please upload a PDF or image file (JPG/PNG).');
+                return;
+            }
+            selectedFile = file;
+            fileNameDisplay.textContent = `Selected: ${file.name}`;
+            fileNameDisplay.style.display = 'block';
+            startBtn.disabled = false;
+        }
+
+        // 3. Start Process
+        startBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+
+            startBtn.disabled = true;
+            startBtn.textContent = 'Uploading...';
+
+            try {
+                // Step 1: Upload
+                const formData = new FormData();
+                formData.append('file', selectedFile);
+                const uploadRes = await fetch('/upload', { method: 'POST', body: formData });
+                const uploadData = await uploadRes.json();
+
+                if (!uploadRes.ok) {
+                    throw new Error(uploadData.detail || "Upload failed");
+                }
+
+                // Step 2: Ask user where to save
+                startBtn.textContent = 'Choose save location...';
+                const promptText = currentMode === 'translator' ? 'Choose where to save the translation' : 'Choose where to save the converted file';
+                const folderRes = await fetch(`/choose_folder?prompt=${encodeURIComponent(promptText)}`);
+                const folderData = await folderRes.json();
+
+                if (!folderRes.ok || folderData.error || folderData.detail) {
+                    const msg = folderData.error || folderData.detail || "Folder selection failed";
+                    if (msg !== "Selection cancelled") alert(msg);
+                    startBtn.disabled = false;
+                    startBtn.textContent = currentMode === 'translator' ? 'Translate' : 'Convert';
+                    return;
+                }
+
+
+                const outputPath = folderData.path;
+                startBtn.textContent = 'Starting...';
+
+                // Step 3: Start Job
+                let query = "";
+
+                if (currentMode === 'translator') {
+                    const visionModel = document.getElementById('ai-ocr-checkbox').checked
+                        ? document.getElementById('vision-model').value
+                        : 'glm-ocr:latest';
+                    const translateModel = document.getElementById('translate-model').value;
+                    const lang = document.getElementById('lang-select').value;
+                    const useAiOcr = document.getElementById('ai-ocr-checkbox').checked;
+                    query = `/process?filename=${encodeURIComponent(uploadData.filename)}&saved_path=${encodeURIComponent(uploadData.saved_path)}&lang=${encodeURIComponent(lang)}&model=${encodeURIComponent(translateModel)}&vision_model=${encodeURIComponent(visionModel)}&output_path=${encodeURIComponent(outputPath)}&use_ai_ocr=${useAiOcr}`;
+                } else {
+                    const size = document.getElementById('size-input').value + document.getElementById('size-unit').value;
+                    const format = document.getElementById('format-select').value;
+                    query = `/convert?filename=${encodeURIComponent(uploadData.filename)}&saved_path=${encodeURIComponent(uploadData.saved_path)}&target_size=${encodeURIComponent(size)}&output_format=${encodeURIComponent(format)}&output_path=${encodeURIComponent(outputPath)}`;
+                }
+
+                const processRes = await fetch(query, { method: 'POST' });
+                const processData = await processRes.json();
+
+                if (!processRes.ok) {
+                    const errDetail = processData.detail || processData.message || 'An error occurred.';
+                    alert(errDetail);
+                    startBtn.disabled = false;
+                    startBtn.textContent = currentMode === 'translator' ? 'Start Translation' : 'Start Conversion';
+                    return;
+                }
+
+                jobId = processData.job_id;
+
+                // Switch UI
+                document.getElementById('upload-section').style.display = 'none';
+                document.getElementById('progress-section').classList.add('active');
+                document.getElementById('progress-section').style.display = 'block'; // Ensure visible
+
+                // Poll Status
+                pollStatus();
+
+            } catch (e) {
+                console.error(e);
+                alert('Error starting process: ' + e);
+                startBtn.disabled = false;
+                startBtn.textContent = currentMode === 'translator' ? 'Translate' : 'Convert';
+            }
+        });
+
+        // 4. Poll Status
+        async function pollStatus() {
+            if (!jobId) return;
+
+            const interval = setInterval(async () => {
+                try {
+                    const res = await fetch(`/status/${jobId}`);
+                    const data = await res.json();
+
+                    // Update UI
+                    const fill = document.getElementById('progress-fill');
+                    const text = document.getElementById('status-text');
+
+                    fill.style.width = `${data.progress}%`;
+                    text.textContent = data.message;
+
+                    if (data.status === 'completed') {
+                        clearInterval(interval);
+                        showResult(data);
+                    } else if (data.status === 'failed') {
+                        clearInterval(interval);
+                        alert('Failed: ' + data.message);
+                        location.reload();
+                    }
+
+                } catch (e) {
+                    console.error("Polling error", e);
+                }
+            }, 1000);
+        }
+
+        function showResult(data) {
+            document.getElementById('progress-section').style.display = 'none';
+            const resDiv = document.getElementById('result-section');
+            resDiv.classList.add('active');
+            resDiv.style.display = 'block';
+
+            const linkBtn = document.getElementById('result-link');
+            const finderBtn = document.getElementById('finder-btn');
+
+            if (currentMode === 'translator') {
+                linkBtn.textContent = "View Report In Browser";
+                document.getElementById('result-desc').textContent = "Your document has been translated.";
+            } else {
+                linkBtn.textContent = "Download / View File";
+                let desc = "Conversion Complete. ";
+                if (data.stats) {
+                    desc += `Reduced to ${data.stats.compressed} (${data.stats.reduction})`;
+                }
+                document.getElementById('result-desc').textContent = desc;
+            }
+
+            linkBtn.href = data.result_url;
+
+            finderBtn.onclick = () => {
+                if (jobId) {
+                    fetch(`/open_output_folder/${jobId}`, { method: 'POST' });
+                }
+            };
+        }
+    </script>
+
+</body>
+
+</html>

@@ -80,10 +80,10 @@ loctran = "loctran.cli:cli_entry"
 loctran-doctor = "loctran.diagnostics:run_doctor"
 
 [tool.setuptools]
-packages = ["loctran", "loctran.server", "loctran.server.static"]
+packages = ["loctran", "loctran.server"]
 
 [tool.setuptools.package-data]
-"loctran.server" = ["static/*"]
+"loctran.server" = ["static/*", "static/**/*"]
 
 [tool.setuptools.exclude-package-data]
 "*" = [
