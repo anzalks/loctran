@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loctran"
-version = "0.1.1b5"
+version = "0.1.1b6"
 description = "Local-first document translation and conversion toolkit"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -36,6 +36,9 @@ dependencies = [
   "ollama>=0.3.0",
   "markdown>=3.3.0",
   "Pillow>=10.0.0",
+  "pytesseract>=0.3.10",
+  "pdfplumber>=0.10.0",
+  "pypdfium2>=4.0.0",
   "fastapi>=0.100.0",
   "uvicorn>=0.23.0",
   "python-multipart>=0.0.6",
@@ -54,7 +57,6 @@ Repository = "https://github.com/anzalks/loctran"
 ocr = [
   "pytesseract>=0.3.10",
   "pdfplumber>=0.10.0",
-  "pypdfium2>=4.0.0",
 ]
 server = [
   "fastapi>=0.100.0",
