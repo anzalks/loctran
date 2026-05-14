@@ -10,7 +10,7 @@
 ## Checklist
 
 - [ ] Tests pass: `pytest -q`
-- [ ] Linting passes: `black --check loctran/` · `isort --check-only loctran/` · `flake8 loctran/`
+- [ ] Linting passes: `ruff check loctran/` · `ruff format --check loctran/`
 - [ ] Type-check passes: `mypy loctran/ --ignore-missing-imports`
 - [ ] CHANGELOG.md updated under `## [Unreleased]`
 - [ ] Docs / README updated if user-facing behaviour changed

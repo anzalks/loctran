@@ -9,14 +9,13 @@ description = "Local-first document translation and conversion toolkit"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Anzal KS" }]
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
-  "License :: OSI Approved :: Apache Software License",
   "Operating System :: OS Independent",
   "Intended Audience :: End Users/Desktop",
   "Intended Audience :: Science/Research",
@@ -63,14 +62,16 @@ test = [
   "httpx",
   "mypy",
 ]
+dev = [
+  "playwright",
+]
 
 [project.scripts]
 loctran = "loctran.cli:cli_entry"
 loctran-doctor = "loctran.diagnostics:run_doctor"
 
 [tool.setuptools]
-packages = ["loctran", "loctran.server"]
-py-modules = ["launcher"]
+packages = ["loctran", "loctran.server", "loctran.server.static"]
 
 [tool.setuptools.package-data]
 "loctran.server" = ["static/*"]

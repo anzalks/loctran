@@ -8,7 +8,7 @@ Thank you for your interest in contributing! Here's everything you need to get s
 git clone https://github.com/anzalks/loctran.git
 cd loctran
 pip install -e ".[ocr,server,test]"
-pip install black isort flake8 mypy pre-commit
+pip install ruff mypy pre-commit
 pre-commit install
 ```
 
@@ -26,12 +26,11 @@ pytest --cov=loctran --cov-fail-under=70 -q
 
 ## Code style
 
-This project uses **black**, **isort**, and **flake8**. All three run in CI and must pass before a PR is merged.
+This project uses **ruff** for linting/formatting and **mypy** for type checks. All checks run in CI and must pass before a PR is merged.
 
 ```bash
-black loctran/
-isort loctran/
-flake8 loctran/
+ruff check loctran/
+ruff format --check loctran/
 mypy loctran/ --ignore-missing-imports
 ```
 
@@ -58,14 +57,14 @@ mypy loctran/ --ignore-missing-imports
 
 ## Checklist
 - [ ] Tests pass (`pytest -q`)
-- [ ] Linting passes (`black --check`, `isort --check-only`, `flake8`)
+- [ ] Linting passes (`ruff check loctran/` and `ruff format --check loctran/`)
 - [ ] CHANGELOG.md updated
 - [ ] Docs updated if behaviour changed
 ```
 
 ## Adding a language or model to the test matrix
 
-The CI matrix is in `.github/workflows/ci.yml`. To add a new language or model to integration tests, add an entry to the `matrix.lang` or `matrix.model` section and add a corresponding mock in `tests/test_translate.py`.
+The CI matrix is in `.github/workflows/ci.yml`. To extend OS/Python coverage, update the `matrix.os` and `matrix.python-version` sections.
 
 ## Questions?
 

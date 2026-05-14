@@ -40,7 +40,7 @@ This document defines the industry-standard practices that must be followed for 
 - **Standard**: Scripts must be located in a `scripts/` directory or root if essential (like `start.sh`).
 
 ## 8. CI/CD Pipeline Validation
-- **Standard**: All code must pass linting (Flake8/Black for Python) before commit.
+- **Standard**: All code must pass linting and formatting checks (`ruff check` and `ruff format --check`) before commit.
 - **Standard**: GitHub Actions must be configured to run tests on every push/PR.
 - **Standard**: No hardcoded secrets or absolute paths in committed code.
 

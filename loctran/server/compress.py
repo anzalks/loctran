@@ -1,9 +1,16 @@
 import io
 import shutil
 from pathlib import Path
+from typing import TypedDict
 
 import pypdfium2 as pdfium
 from PIL import Image
+
+
+class _CompressionResult(TypedDict):
+    size: int
+    data: bytes
+    desc: str
 
 
 def parse_size(size_str: str) -> int:
@@ -24,11 +31,12 @@ def parse_size(size_str: str) -> int:
 
 def format_size(size_bytes: int) -> str:
     """Format file size."""
+    size_value = float(size_bytes)
     for unit in ["B", "KB", "MB", "GB"]:
-        if size_bytes < 1024.0:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024.0
-    return f"{size_bytes:.1f} TB"
+        if size_value < 1024.0:
+            return f"{size_value:.1f} {unit}"
+        size_value /= 1024.0
+    return f"{size_value:.1f} TB"
 
 
 def compress_pdf_safe(input_path: str, output_path: str, target_size: int) -> dict:
@@ -54,7 +62,7 @@ def compress_pdf_safe(input_path: str, output_path: str, target_size: int) -> di
     qualities = [80, 60, 40]
     scales = [2, 1.5, 1.0]
 
-    best_result = None
+    best_result: _CompressionResult | None = None
 
     # We can't easily iterate ALL combos for ALL pages perfectly without being slow.
     # Strategy: Render at reasonably high quality, then save PDF.

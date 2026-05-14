@@ -6,7 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/) and this 
 ## [Unreleased]
 
 ### Added
-- Placeholder for upcoming changes.
+- `scripts/capture_screenshots.py` for reproducible, headless UI screenshots.
+- `Makefile` target `screenshots` to regenerate README screenshots.
+
+### Changed
+- README screenshots now live in `docs/screenshots/`.
+- Documentation commands updated to current CLI usage (`loctran serve`, `loctran translate`).
+- CI now validates package build artifacts with `python -m build` and `twine check`.
+
+### Fixed
+- Mypy errors in `loctran/server/compress.py` that caused CI failures.
+- Packaging config no longer references a missing `launcher.py` module.
 
 ## [0.1.1b1] - 2026-05-13
 
@@ -21,8 +31,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/) and this 
 - GitHub issue templates (bug report, feature request).
 - GitHub PR template with checklist.
 - `Dockerfile` for containerised deployment.
-- `.github/workflows/docs.yml` for automatic MkDocs GitHub Pages deployment.
-- `mkdocs.yml` for MkDocs + Material documentation site.
 
 ### Changed
 - `DEFAULT_MODEL` changed from `qwen2.5:32b` to `qwen2.5:7b` (runs on most hardware, ~4 GB).

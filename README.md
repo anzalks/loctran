@@ -8,7 +8,7 @@
 **Translate PDFs locally. No cloud. No API key. Just Ollama.**
 
 <p align="center">
-  <img src="screen_grabs/1.png" width="800" alt="Loctran — translated PDF overlay">
+  <img src="docs/screenshots/landing.png" width="800" alt="Loctran landing page">
 </p>
 
 ---
@@ -16,9 +16,9 @@
 ## 30-second install
 
 ```bash
-pip install loctran
+pip install "loctran[ocr,server]"
 ollama pull qwen2.5:7b          # one-time, ~4 GB
-loctran document.pdf --lang French
+loctran translate document.pdf --lang French
 ```
 
 ---
@@ -80,12 +80,12 @@ All required dependencies satisfied.
 Start the server and open your browser:
 
 ```bash
-loctran-server
+loctran serve
 # → http://localhost:8000
 ```
 
 <p align="center">
-  <img src="screen_grabs/2.png" width="720" alt="Loctran web UI">
+  <img src="docs/screenshots/translator.png" width="720" alt="Loctran translator UI">
 </p>
 
 Upload a PDF, choose a target language and model, then watch the real-time progress bar. The translated HTML opens automatically when done.
@@ -95,33 +95,37 @@ Upload a PDF, choose a target language and model, then watch the real-time progr
 ## CLI reference
 
 ```
-usage: loctran [-h] [--lang LANG] [--model MODEL] [--output OUTPUT]
-               [--batch-size N] [--extract-only] [--force-ocr] [--use-ai-ocr]
-               input_path
+Usage: loctran [OPTIONS] COMMAND [ARGS]...
 
-positional arguments:
-  input_path        Path to PDF file or folder containing PDFs
-
-options:
-  --lang LANG       Target language (default: French)
-  --model MODEL     Ollama model (default: qwen2.5:7b)
-  --output OUTPUT   Custom output directory
-  --batch-size N    Segments per translation batch (default: 5)
-  --extract-only    Run only OCR — skip translation
-  --force-ocr       Ignore digital text layer, force fresh OCR
-  --use-ai-ocr      Use a vision model for OCR instead of Tesseract
+Commands:
+  serve      Run the local web UI server.
+  translate  Translate a file or folder using local OCR + Ollama.
+  doctor     Run environment diagnostics for dependencies and models.
 ```
 
 ```bash
 # Translate to Spanish using a larger model
-loctran report.pdf --lang Spanish --model qwen2.5:32b
+loctran translate report.pdf --lang Spanish --model qwen2.5:32b
 
 # Extract text only, save to custom folder
-loctran scan.pdf --extract-only --output ~/Desktop/extracted
+loctran translate scan.pdf --extract-only --output ~/Desktop/extracted
 
 # Use smaller batches to avoid context overflow on long documents
-loctran book.pdf --lang German --batch-size 3
+loctran translate book.pdf --lang German --batch-size 3
+
+# Run dependency diagnostics
+loctran doctor
 ```
+
+## Updating README screenshots
+
+```bash
+pip install -e ".[dev,server]"
+python -m playwright install chromium
+make screenshots
+```
+
+This writes screenshots to `docs/screenshots/` using `scripts/capture_screenshots.py`.
 
 ---
 

@@ -25,12 +25,12 @@ env/
 *.jpeg
 *.png
 *.gif
+!docs/screenshots/*.png
 
 
 # Data Outputs and User Data (CRITICAL: Prevent data leaks)
 uploads/
 outputs/
-screen_grabs/
 images/
 converted_html/
 converted_images/

@@ -37,15 +37,17 @@ description: Comprehensive guide for developing, debugging, and maintaining the 
 ### File Structure
 ```
 loctran/
-├── app/
-│   ├── server.py       # FastAPI entry point, lifecycle, WebSocket heartbeat
-│   ├── extract.py      # PDF -> Images -> HTML/Text extraction
-│   ├── translate.py    # AI Translation logic
-│   ├── compress.py     # PDF compression logic (Commercial Safe)
-│   └── static/         # Frontend assets (index.html, style.css)
-├── uploads/            # Temporary storage for inputs (auto-cleaned)
-├── tools/              # Helper scripts
-└── setup.sh            # Dependency installer
+├── __init__.py
+├── cli.py              # CLI entrypoints (`serve`, `translate`, `doctor`)
+├── extract.py          # PDF -> images/text extraction
+├── translate.py        # Translation logic
+└── server/
+    ├── server.py       # FastAPI entry point, lifecycle, WebSocket heartbeat
+    ├── compress.py     # PDF/image compression logic
+    └── static/         # Frontend assets (index.html, style.css, logo, manifest)
+uploads/                # Temporary storage for inputs (auto-cleaned)
+outputs/                # Generated outputs
+scripts/                # Utility scripts
 ```
 
 ### Request Lifecycle
@@ -54,7 +56,7 @@ loctran/
 3.  **Processing**:
     -   **Translator**: PDF -> Images -> OCR -> Text -> AI Translate -> HTML Reconstruct.
     -   **Converter**: Compression pipeline (pypdfium2/other).
-4.  **Updates**: Polling via `/status/{job_id}`.
+4.  **Updates**: Real-time updates over WebSocket heartbeat and job status endpoints.
 5.  **Completion**: Result served via secure `/view/...` endpoint.
 
 ### Server Lifecycle
