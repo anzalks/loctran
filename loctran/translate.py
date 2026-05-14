@@ -23,7 +23,7 @@ def _get_ollama() -> Any:
         import ollama  # type: ignore
     except ImportError as exc:
         raise DependencyError(
-            "Missing optional dependency 'ollama'. Install with: pip install loctran[server]"
+            "Missing optional dependency 'ollama'. Install with: pip install loctran"
         ) from exc
     return ollama
 
