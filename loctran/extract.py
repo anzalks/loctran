@@ -42,8 +42,13 @@ POSSIBLE_TESSERACT_PATHS = [
 
 
 def _missing_dependency_error(module_name: str, extra_name: str) -> DependencyError:
+    install_hint = (
+        "pip install loctran"
+        if extra_name == "ocr"
+        else f"pip install loctran[{extra_name}]"
+    )
     return DependencyError(
-        f"Missing optional dependency '{module_name}'. Install with: pip install loctran[{extra_name}]"
+        f"Missing optional dependency '{module_name}'. Install with: {install_hint}"
     )
 
 

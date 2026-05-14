@@ -50,11 +50,6 @@ loctran
 ```
 
 ```bash
-# Optional if you want OCR-backed PDF extraction as well
-pip install "loctran[ocr]"
-```
-
-```bash
 # CLI translation example
 loctran translate document.pdf --lang French
 ```
