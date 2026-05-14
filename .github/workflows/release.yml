@@ -62,7 +62,7 @@ jobs:
 
   github_release:
     name: Create GitHub Release
-    needs: build_and_smoke_test
+    needs: pypi-publish
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifacts
