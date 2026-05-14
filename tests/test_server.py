@@ -8,12 +8,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import time
+from contextlib import suppress
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import WebSocketDisconnect
 
 
 @pytest.fixture(scope="module")
@@ -361,3 +364,114 @@ class TestViewEndpoints:
             assert resp.status_code == 200
         finally:
             srv.jobs.pop(job_id, None)
+
+
+class _DummyPendingTask:
+    def __init__(self):
+        self.cancel_called = False
+
+    def done(self):
+        return False
+
+    def cancel(self):
+        self.cancel_called = True
+
+
+class _CapturedTask:
+    def __init__(self, coro):
+        self.coro = coro
+        self.cancel_called = False
+
+    def done(self):
+        return False
+
+    def cancel(self):
+        self.cancel_called = True
+
+
+class _FakeDisconnectWebSocket:
+    async def accept(self):
+        return None
+
+    async def receive_text(self):
+        raise WebSocketDisconnect(code=1001)
+
+
+class TestDesktopHeartbeatShutdown:
+    def test_disconnect_schedules_delayed_shutdown_and_requests_exit(self):
+        from loctran.server import server as srv
+
+        ws = _FakeDisconnectWebSocket()
+        scheduled = []
+
+        def _capture_task(coro):
+            task = _CapturedTask(coro)
+            scheduled.append(task)
+            return task
+
+        original_grace = srv.GRACE_PERIOD
+        original_server_instance = srv._server_instance
+        original_pending = srv._pending_shutdown_task
+        original_connections = set(srv.active_connections)
+
+        srv.GRACE_PERIOD = 0
+        srv._pending_shutdown_task = None
+        srv.active_connections.clear()
+        srv.SHUTDOWN_EVENT.clear()
+
+        mock_server = MagicMock()
+        mock_server.should_exit = False
+        srv._server_instance = mock_server
+
+        try:
+            with (
+                patch("loctran.server.server._desktop_mode_enabled", return_value=True),
+                patch("loctran.server.server.asyncio.create_task", side_effect=_capture_task),
+                patch.object(srv, "DIALOG_OPEN", False),
+            ):
+                asyncio.run(srv.websocket_heartbeat(ws))
+
+            assert len(scheduled) == 1
+
+            # Execute the captured delayed shutdown coroutine.
+            asyncio.run(scheduled[0].coro)
+
+            assert srv.SHUTDOWN_EVENT.is_set() is True
+            assert mock_server.should_exit is True
+        finally:
+            for task in scheduled:
+                coro = getattr(task, "coro", None)
+                if coro is not None:
+                    with suppress(Exception):
+                        coro.close()
+            srv.GRACE_PERIOD = original_grace
+            srv._server_instance = original_server_instance
+            srv._pending_shutdown_task = original_pending
+            srv.active_connections.clear()
+            srv.active_connections.update(original_connections)
+            srv.SHUTDOWN_EVENT.clear()
+
+    def test_new_heartbeat_connection_cancels_pending_shutdown(self):
+        from loctran.server import server as srv
+
+        ws = _FakeDisconnectWebSocket()
+        original_pending = srv._pending_shutdown_task
+        original_connections = set(srv.active_connections)
+        pending = _DummyPendingTask()
+
+        srv._pending_shutdown_task = pending
+        srv.active_connections.clear()
+
+        try:
+            with (
+                patch("loctran.server.server._desktop_mode_enabled", return_value=False),
+                patch.object(srv, "DIALOG_OPEN", False),
+            ):
+                asyncio.run(srv.websocket_heartbeat(ws))
+
+            assert pending.cancel_called is True
+            assert srv._pending_shutdown_task is None
+        finally:
+            srv._pending_shutdown_task = original_pending
+            srv.active_connections.clear()
+            srv.active_connections.update(original_connections)

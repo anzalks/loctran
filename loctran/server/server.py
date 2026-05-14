@@ -300,8 +300,8 @@ async def _delayed_desktop_shutdown() -> None:
     if not _desktop_mode_enabled() or DIALOG_OPEN:
         return
 
-    if _has_active_connections() or _has_active_jobs():
-        logger.info("Desktop reconnect or active job detected, cancelling shutdown")
+    if _has_active_connections():
+        logger.info("Desktop reconnect detected, cancelling shutdown")
         return
 
     request_graceful_shutdown("desktop websocket disconnected")
@@ -899,7 +899,6 @@ async def websocket_heartbeat(websocket: WebSocket):
             _desktop_mode_enabled()
             and not DIALOG_OPEN
             and not _has_active_connections()
-            and not _has_active_jobs()
         ):
             _pending_shutdown_task = asyncio.create_task(_delayed_desktop_shutdown())
 
