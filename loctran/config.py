@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
+
+from loctran.model_policy import LOW_RESOURCE_MODEL
 from loctran.translate import BATCH_SIZE, DEFAULT_LANG, DEFAULT_MODEL
 
 if sys.version_info >= (3, 11):
@@ -18,11 +22,41 @@ CONFIG_PATH = Path.home() / ".loctran" / "config.toml"
 
 DEFAULTS: dict[str, Any] = {
     "default_model": DEFAULT_MODEL,
+    "low_resource_model": LOW_RESOURCE_MODEL,
     "default_lang": DEFAULT_LANG,
     "batch_size": BATCH_SIZE,
     "port": 8000,
     "auto_open_browser": True,
 }
+
+
+class AppSettings(BaseModel):
+    """Application settings resolved from config and environment."""
+
+    default_model: str = Field(default=DEFAULT_MODEL)
+    low_resource_model: str = Field(default=LOW_RESOURCE_MODEL)
+    default_lang: str = Field(default=DEFAULT_LANG)
+    batch_size: int = Field(default=BATCH_SIZE)
+    port: int = Field(default=8000)
+    auto_open_browser: bool = Field(default=True)
+    desktop_mode: bool = Field(default=False)
+    debug: bool = Field(default=False)
+
+
+def load_settings(overrides: dict[str, Any] | None = None) -> AppSettings:
+    """Load typed settings from config, environment, and optional overrides."""
+    merged = load()
+    if overrides:
+        merged.update(overrides)
+
+    env_desktop = os.getenv("LOCTRAN_DESKTOP_MODE")
+    env_debug = os.getenv("LOCTRAN_DEBUG")
+    if env_desktop is not None:
+        merged["desktop_mode"] = env_desktop == "1"
+    if env_debug is not None:
+        merged["debug"] = env_debug == "1"
+
+    return AppSettings.model_validate(merged)
 
 
 def load() -> dict[str, Any]:
@@ -53,6 +87,7 @@ def write_defaults() -> None:
     CONFIG_PATH.write_text(
         "[translate]\n"
         f'default_model = "{DEFAULT_MODEL}"\n'
+        f'low_resource_model = "{LOW_RESOURCE_MODEL}"\n'
         f'default_lang  = "{DEFAULT_LANG}"\n'
         f"batch_size    = {BATCH_SIZE}\n\n"
         "[server]\n"

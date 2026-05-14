@@ -3,166 +3,209 @@ from __future__ import annotations
 import os
 import threading
 import time
+import urllib.error
+import urllib.request
 import webbrowser
 from pathlib import Path
 
 import click
-import uvicorn
+from rich.console import Console
 
-from loctran.config import load, write_defaults
+from loctran.config import load_settings, write_defaults
 from loctran.diagnostics import run_doctor
 from loctran.extract import process_file
 from loctran.translate import BATCH_SIZE, DEFAULT_LANG, DEFAULT_MODEL, process_folder
 
-
-def _cfg() -> dict[str, object]:
-    """Load user config with safe fallback to package defaults."""
-    write_defaults()
-    return load()
+console = Console()
 
 
-def _resolve_output_dir(input_path: Path, output: str | None) -> Path:
-    """Resolve output directory from CLI args."""
-    if output:
-        return Path(output).resolve()
-    if input_path.is_file():
-        return input_path.parent / "outputs"
-    return input_path / "outputs"
+def _wait_for_server(url: str, retries: int = 40, delay: float = 0.25) -> bool:
+    """Wait for health endpoint to respond before opening the browser."""
+    health_url = f"{url}/health"
+    for _ in range(retries):
+        try:
+            with urllib.request.urlopen(health_url, timeout=0.5):
+                return True
+        except (urllib.error.URLError, TimeoutError):
+            time.sleep(delay)
+    return False
 
 
-@click.group(invoke_without_command=True)
-@click.pass_context
-def cli_entry(ctx: click.Context) -> None:
-    """Loctran - translate PDFs locally with Ollama. No cloud, no API key."""
-    write_defaults()
-    if ctx.invoked_subcommand is None:
-        ctx.invoke(serve)
-
-
-@cli_entry.command("serve")
-@click.option(
-    "--port", type=int, default=8000, show_default=True, help="Port for the web UI."
-)
-@click.option(
-    "--host",
-    default="127.0.0.1",
-    show_default=True,
-    help="Bind address. Use 0.0.0.0 to expose on the network.",
-)
-@click.option(
-    "--no-browser",
-    is_flag=True,
-    default=False,
-    help="Start server without opening browser.",
-)
-@click.option(
-    "--desktop-mode",
-    is_flag=True,
-    default=False,
-    help="Disable idle-shutdown (keeps server alive when browser closes).",
-)
-def serve(port: int, host: str, no_browser: bool, desktop_mode: bool) -> None:
-    """Start the web UI and open it in your browser."""
-    if desktop_mode:
-        os.environ["LOCTRAN_DESKTOP_MODE"] = "1"
-
-    if not no_browser:
-
-        def _open() -> None:
-            time.sleep(1.5)
-            webbrowser.open(f"http://localhost:{port}")
-
-        threading.Thread(target=_open, daemon=True).start()
-
-    log_level = "info" if os.getenv("LOCTRAN_DEBUG") else "error"
-    uvicorn.run(
-        "loctran.server.server:app",
-        host=host,
-        port=port,
-        log_level=log_level,
-    )
-
-
-@cli_entry.command("translate")
-@click.argument("input_path", type=click.Path(path_type=Path))
-@click.option("--lang", default=None, help=f"Target language (default: {DEFAULT_LANG})")
-@click.option("--model", default=None, help=f"Ollama model (default: {DEFAULT_MODEL})")
-@click.option(
-    "--output",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Custom output directory",
-)
-@click.option(
-    "--batch-size",
-    type=int,
-    default=None,
-    show_default=False,
-    help=f"Number of segments per translation batch (default: {BATCH_SIZE})",
-)
-@click.option(
-    "--extract-only",
-    is_flag=True,
-    default=False,
-    help="Run only OCR/Extraction (No LLM Inference)",
-)
-@click.option(
-    "--force-ocr",
-    is_flag=True,
-    default=False,
-    help="Ignore digital text and force fresh OCR",
-)
-@click.option(
-    "--use-ai-ocr", is_flag=True, default=False, help="Use AI OCR for extraction"
-)
-def translate(
-    input_path: Path,
-    lang: str | None,
-    model: str | None,
-    output: Path | None,
-    batch_size: int | None,
+def _run_translate(
+    input_path: str,
+    lang: str,
+    model: str,
+    output: str | None,
+    batch_size: int,
     extract_only: bool,
     force_ocr: bool,
     use_ai_ocr: bool,
-) -> None:
-    """Run local PDF extraction and translation pipeline."""
-    cfg = _cfg()
-    resolved_lang = lang or str(cfg.get("default_lang", DEFAULT_LANG))
-    resolved_model = model or str(cfg.get("default_model", DEFAULT_MODEL))
-    resolved_batch_size = (
-        int(cfg.get("batch_size", BATCH_SIZE)) if batch_size is None else batch_size
-    )
+) -> int:
+    """Run extraction and optional translation for a file or folder."""
+    resolved_input = Path(input_path).resolve()
 
-    source = input_path.resolve()
-    output_dir = _resolve_output_dir(source, str(output) if output else None)
+    if output:
+        output_dir = Path(output).resolve()
+    elif resolved_input.is_file():
+        output_dir = resolved_input.parent / "outputs"
+    else:
+        output_dir = resolved_input / "outputs"
+
     doc_dir = process_file(
-        source,
+        resolved_input,
         output_dir,
         force_ocr=force_ocr,
         use_ai_ocr=use_ai_ocr,
     )
     if not doc_dir:
-        raise click.ClickException("Extraction failed. Aborting pipeline.")
+        console.print("[red]Extraction failed. Aborting pipeline.[/red]")
+        return 1
 
     if not extract_only:
-        process_folder(
-            doc_dir,
-            resolved_lang,
-            resolved_model,
-            batch_size=resolved_batch_size,
+        process_folder(doc_dir, lang, model, batch_size=batch_size)
+
+    console.print("[green]Pipeline complete.[/green]")
+    return 0
+
+
+@click.group(invoke_without_command=True)
+@click.option("--debug", is_flag=True, help="Enable debug logs and full tracebacks.")
+@click.pass_context
+def cli_entry(ctx: click.Context, debug: bool) -> None:
+    """Loctran command-line interface."""
+    write_defaults()
+    if debug:
+        os.environ["LOCTRAN_DEBUG"] = "1"
+    ctx.ensure_object(dict)
+    ctx.obj["debug"] = debug
+
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(serve, desktop=True, no_browser=False, host="127.0.0.1", port=None)
+
+
+@cli_entry.command("serve")
+@click.option(
+    "--desktop/--no-desktop",
+    default=True,
+    show_default=True,
+    help="Enable auto-shutdown when UI disconnects.",
+)
+@click.option("--no-browser", is_flag=True, help="Do not auto-open the browser.")
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    show_default=True,
+    help="Host interface for the web server.",
+)
+@click.option("--port", type=int, default=None, help="Port for the web server.")
+@click.pass_context
+def serve(
+    ctx: click.Context,
+    desktop: bool,
+    no_browser: bool,
+    host: str,
+    port: int | None,
+) -> None:
+    """Run the local web UI server."""
+    settings = load_settings()
+    effective_port = port or settings.port
+    auto_open = (not no_browser) and settings.auto_open_browser
+    os.environ["LOCTRAN_DESKTOP_MODE"] = "1" if desktop else "0"
+
+    try:
+        from loctran.server import server as server_mod
+
+        server_mod.install_signal_handlers()
+        uv_server = server_mod.build_server(host=host, port=effective_port)
+        server_thread = threading.Thread(
+            target=uv_server.run,
+            name="loctran-uvicorn",
+            daemon=False,
         )
+        server_thread.start()
+
+        base_url = f"http://{host}:{effective_port}"
+        console.print(f"[green]Loctran server started:[/green] {base_url}")
+
+        if auto_open:
+            if _wait_for_server(base_url):
+                webbrowser.open(base_url)
+            else:
+                console.print(
+                    "[yellow]Server health check did not respond before browser open timeout.[/yellow]"
+                )
+
+        while server_thread.is_alive():
+            server_thread.join(timeout=0.25)
+    except KeyboardInterrupt:
+        if "server_mod" in locals():
+            server_mod.request_graceful_shutdown("keyboard interrupt")
+    except Exception as exc:
+        if ctx.obj.get("debug"):
+            raise
+        raise click.ClickException(f"Failed to start server: {exc}") from exc
+
+
+@cli_entry.command("translate")
+@click.argument("input_path", type=click.Path(exists=True, path_type=str))
+@click.option("--lang", default=None, help="Target language.")
+@click.option("--model", default=None, help="Ollama model.")
+@click.option(
+    "--output",
+    type=click.Path(path_type=str),
+    default=None,
+    help="Custom output directory.",
+)
+@click.option(
+    "--batch-size",
+    default=None,
+    type=int,
+    help="Number of segments per translation batch.",
+)
+@click.option("--extract-only", is_flag=True, help="Run OCR/extraction only.")
+@click.option("--force-ocr", is_flag=True, help="Ignore digital text and force OCR.")
+@click.option("--use-ai-ocr", is_flag=True, help="Use AI OCR for extraction.")
+@click.pass_context
+def translate_command(
+    ctx: click.Context,
+    input_path: str,
+    lang: str | None,
+    model: str | None,
+    output: str | None,
+    batch_size: int | None,
+    extract_only: bool,
+    force_ocr: bool,
+    use_ai_ocr: bool,
+) -> None:
+    """Translate a file or folder using local OCR + Ollama."""
+    settings = load_settings()
+    resolved_lang = lang or settings.default_lang or DEFAULT_LANG
+    resolved_model = model or settings.default_model or DEFAULT_MODEL
+    resolved_batch_size = batch_size or settings.batch_size or BATCH_SIZE
+
+    try:
+        exit_code = _run_translate(
+            input_path=input_path,
+            lang=resolved_lang,
+            model=resolved_model,
+            output=output,
+            batch_size=resolved_batch_size,
+            extract_only=extract_only,
+            force_ocr=force_ocr,
+            use_ai_ocr=use_ai_ocr,
+        )
+    except Exception as exc:
+        if ctx.obj.get("debug"):
+            raise
+        raise click.ClickException(f"Translation failed: {exc}") from exc
+    raise SystemExit(exit_code)
 
 
 @cli_entry.command("doctor")
-def doctor() -> None:
-    """Run dependency diagnostics for Tesseract and Ollama."""
+def doctor_command() -> None:
+    """Run environment diagnostics for dependencies and models."""
     raise SystemExit(run_doctor())
 
 
-def main() -> None:
-    """CLI entrypoint for manual module execution."""
-    cli_entry(standalone_mode=True)
-
-
 if __name__ == "__main__":
-    main()
+    cli_entry()

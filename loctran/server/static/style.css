@@ -179,6 +179,35 @@ button[onclick*="landing"]:hover {
     box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
 }
 
+.startup-warning-banner {
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 16px;
+    margin-bottom: 4px;
+    border-radius: 14px;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.12);
+    color: #92400e;
+    text-align: left;
+}
+
+.startup-warning-banner strong {
+    display: block;
+    margin-bottom: 4px;
+}
+
+.startup-warning-banner button {
+    border: none;
+    border-radius: 999px;
+    background: rgba(146, 64, 14, 0.12);
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    padding: 8px 14px;
+    white-space: nowrap;
+}
+
 /* Button */
 .btn-primary {
     background: var(--primary-gradient);

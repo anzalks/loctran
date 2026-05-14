@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -22,23 +23,69 @@ from click.testing import CliRunner
 
 class TestCli:
     def test_bare_loctran_invokes_serve(self, monkeypatch):
-        invoked = []
-        monkeypatch.setattr("loctran.cli.uvicorn.run", lambda *a, **kw: invoked.append(True))
-        monkeypatch.setattr("loctran.cli.webbrowser.open", lambda *a: None)
-        monkeypatch.setattr("loctran.cli.time.sleep", lambda *a: None)
+        started = []
+
+        class _FakeThread:
+            def __init__(self, target=None, **_kwargs):
+                self._target = target
+
+            def start(self):
+                started.append(True)
+                if self._target:
+                    self._target()
+
+            def is_alive(self):
+                return False
+
+            def join(self, timeout=None):
+                return None
+
+        monkeypatch.setattr("loctran.cli.threading.Thread", _FakeThread)
+        monkeypatch.setattr("loctran.cli._wait_for_server", lambda *_a, **_kw: True)
+        monkeypatch.setattr("loctran.cli.webbrowser.open", lambda *_a, **_kw: None)
+
+        from loctran.server import server as server_mod
+        monkeypatch.setattr(server_mod, "install_signal_handlers", lambda: None)
+
+        fake_server = MagicMock()
+        fake_server.run = lambda: None
+        monkeypatch.setattr(server_mod, "build_server", lambda *a, **kw: fake_server)
 
         from loctran.cli import cli_entry
 
         runner = CliRunner()
         result = runner.invoke(cli_entry, [])
 
-        assert invoked
+        assert started
+        assert os.getenv("LOCTRAN_DESKTOP_MODE") == "1"
         assert result.exit_code == 0
 
     def test_serve_no_browser_flag(self, monkeypatch):
         opened = []
-        monkeypatch.setattr("loctran.cli.uvicorn.run", lambda *a, **kw: None)
+
+        class _FakeThread:
+            def __init__(self, target=None, **_kwargs):
+                self._target = target
+
+            def start(self):
+                if self._target:
+                    self._target()
+
+            def is_alive(self):
+                return False
+
+            def join(self, timeout=None):
+                return None
+
+        monkeypatch.setattr("loctran.cli.threading.Thread", _FakeThread)
+        monkeypatch.setattr("loctran.cli._wait_for_server", lambda *_a, **_kw: True)
         monkeypatch.setattr("loctran.cli.webbrowser.open", lambda url: opened.append(url))
+
+        from loctran.server import server as server_mod
+        monkeypatch.setattr(server_mod, "install_signal_handlers", lambda: None)
+        fake_server = MagicMock()
+        fake_server.run = lambda: None
+        monkeypatch.setattr(server_mod, "build_server", lambda *a, **kw: fake_server)
 
         from loctran.cli import cli_entry
 
@@ -47,6 +94,41 @@ class TestCli:
 
         assert result.exit_code == 0
         assert not opened
+
+    def test_serve_uses_config_port_for_browser(self, monkeypatch):
+        opened = []
+
+        class _FakeThread:
+            def __init__(self, target=None, **_kwargs):
+                self._target = target
+
+            def start(self):
+                if self._target:
+                    self._target()
+
+            def is_alive(self):
+                return False
+
+            def join(self, timeout=None):
+                return None
+
+        monkeypatch.setattr("loctran.cli.threading.Thread", _FakeThread)
+        monkeypatch.setattr("loctran.cli._wait_for_server", lambda *_a, **_kw: True)
+        monkeypatch.setattr("loctran.cli.webbrowser.open", lambda url: opened.append(url))
+
+        from loctran.server import server as server_mod
+        monkeypatch.setattr(server_mod, "install_signal_handlers", lambda: None)
+        fake_server = MagicMock()
+        fake_server.run = lambda: None
+        monkeypatch.setattr(server_mod, "build_server", lambda *a, **kw: fake_server)
+
+        from loctran.cli import cli_entry
+        with patch("loctran.cli.load_settings", return_value=MagicMock(port=8765, auto_open_browser=True)):
+            runner = CliRunner()
+            result = runner.invoke(cli_entry, ["serve"])
+
+        assert result.exit_code == 0
+        assert opened == ["http://127.0.0.1:8765"]
 
     def test_extract_only_skips_translation(self, tmp_path):
         fake_pdf = tmp_path / "doc.pdf"
@@ -118,12 +200,14 @@ class TestCli:
 
         with (
             patch(
-                "loctran.cli.load",
-                return_value={
-                    "default_model": "custom:model",
-                    "default_lang": "French",
-                    "batch_size": 5,
-                },
+                "loctran.cli.load_settings",
+                return_value=MagicMock(
+                    default_model="custom:model",
+                    default_lang="Spanish",
+                    batch_size=5,
+                    port=8000,
+                    auto_open_browser=True,
+                ),
             ),
             patch("loctran.cli.process_file", return_value=tmp_path / "out"),
             patch("loctran.cli.process_folder", process_folder_mock),
@@ -134,6 +218,7 @@ class TestCli:
         assert result.exit_code == 0
         _, kwargs = process_folder_mock.call_args
         assert kwargs.get("batch_size") == 5
+        assert process_folder_mock.call_args.args[1] == "Spanish"
         assert process_folder_mock.call_args.args[2] == "custom:model"
 
 

@@ -30,10 +30,13 @@ keywords = [
   "privacy", "offline", "tesseract", "document",
 ]
 dependencies = [
+  "click",
   "tqdm",
   "langdetect",
   "markdown",
   "Pillow",
+  "psutil",
+  "pydantic",
   "requests",
   "fpdf",
   "rich",
