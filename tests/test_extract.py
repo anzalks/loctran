@@ -486,6 +486,176 @@ class TestGetSegmentsDigital:
         with patch("loctran.extract._get_pdfplumber", side_effect=RuntimeError("no pdfplumber")):
             segs = ext.get_segments_digital("dummy.pdf", 0)
         assert segs == []
+
+
+class TestHybridAndProcessPageCoverage:
+    def test_get_segments_hybrid_returns_segments(self, tmp_path):
+        import loctran.extract as ext
+        from PIL import Image
+
+        image_path = tmp_path / "page.jpg"
+        Image.new("RGB", (200, 100), color="white").save(image_path)
+
+        fake_data = {
+            "text": ["Hello", "world"],
+            "left": [10, 100],
+            "top": [20, 20],
+            "width": [50, 50],
+            "height": [20, 20],
+            "conf": [90, 85],
+        }
+        empty_data = {
+            "text": [],
+            "left": [],
+            "top": [],
+            "width": [],
+            "height": [],
+            "conf": [],
+        }
+
+        fake_tesseract = MagicMock()
+        fake_tesseract.Output.DICT = "dict"
+        fake_tesseract.image_to_data.side_effect = [fake_data, empty_data]
+
+        with (
+            patch("loctran.extract._configure_tesseract_path", return_value=fake_tesseract),
+            patch("loctran.extract._get_pillow_image", return_value=Image),
+        ):
+            segments = ext.get_segments_hybrid(str(image_path), use_ai=False)
+
+        assert len(segments) > 0
+        assert all("text" in s and "bbox" in s for s in segments)
+
+    def test_process_page_falls_back_without_vision_model(self, tmp_path):
+        import loctran.extract as ext
+        from PIL import Image
+
+        image_path = tmp_path / "page.jpg"
+        Image.new("RGB", (100, 100), "white").save(image_path)
+        fake_segments = [{"text": "translated", "bbox": [0, 0, 20, 10]}]
+
+        with patch("loctran.extract.get_segments_hybrid", return_value=fake_segments) as mocked:
+            result = ext.process_page(
+                ("dummy.pdf", str(image_path), 0, True, True, None)
+            )
+
+        mocked.assert_called_once_with(
+            str(image_path), use_ai=True, vision_model=None
+        )
+        assert result is not None
+        assert result["segments"] == fake_segments
+        assert "translated" in result["full_text"]
+
+    def test_process_page_uses_digital_path_when_text_layer_exists(self, tmp_path):
+        import loctran.extract as ext
+        from PIL import Image
+
+        image_path = tmp_path / "page.jpg"
+        Image.new("RGB", (200, 100), "white").save(image_path)
+
+        words = [
+            {
+                "text": "Hello",
+                "x0": 10,
+                "x1": 40,
+                "top": 10,
+                "bottom": 22,
+                "height": 12,
+            },
+            {
+                "text": "world",
+                "x0": 45,
+                "x1": 80,
+                "top": 10,
+                "bottom": 22,
+                "height": 12,
+            },
+        ]
+
+        fake_page = MagicMock()
+        fake_page.extract_text.return_value = "x" * 70
+        fake_page.extract_words.return_value = words
+        fake_page.width = 100
+        fake_page.height = 50
+
+        fake_pdf = MagicMock()
+        fake_pdf.pages = [fake_page]
+        fake_ctx = MagicMock()
+        fake_ctx.__enter__ = MagicMock(return_value=fake_pdf)
+        fake_ctx.__exit__ = MagicMock(return_value=False)
+
+        fake_pdfplumber = MagicMock()
+        fake_pdfplumber.open.return_value = fake_ctx
+
+        with (
+            patch("loctran.extract._get_pdfplumber", return_value=fake_pdfplumber),
+            patch("loctran.extract._get_pillow_image", return_value=Image),
+        ):
+            result = ext.process_page(
+                ("dummy.pdf", str(image_path), 0, False, False, "glm-ocr:latest")
+            )
+
+        assert result["segments"]
+        assert result["segments"][0]["method"] == "Digital"
+
+
+class TestDependencyChecks:
+    def test_check_dependencies_true_when_tesseract_exists(self):
+        import loctran.extract as ext
+
+        fake_tesseract = MagicMock()
+        fake_tesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
+
+        with (
+            patch("loctran.extract._configure_tesseract_path", return_value=fake_tesseract),
+            patch("loctran.extract.shutil.which", return_value="/usr/bin/tesseract"),
+        ):
+            assert ext.check_dependencies() is True
+
+    def test_check_dependencies_false_when_missing(self):
+        import loctran.extract as ext
+
+        fake_tesseract = MagicMock()
+        fake_tesseract.pytesseract.tesseract_cmd = "/missing/tesseract"
+
+        with (
+            patch("loctran.extract._configure_tesseract_path", return_value=fake_tesseract),
+            patch("loctran.extract.shutil.which", return_value=None),
+            patch("loctran.extract.os.path.exists", return_value=False),
+        ):
+            assert ext.check_dependencies() is False
+
+
+class TestExtractMain:
+    def test_main_calls_process_file_for_input_file(self, tmp_path):
+        import loctran.extract as ext
+
+        source = tmp_path / "doc.pdf"
+        source.write_bytes(b"%PDF-1.4")
+
+        with (
+            patch("sys.argv", ["extract", str(source)]),
+            patch("loctran.extract.check_dependencies", return_value=True),
+            patch("loctran.extract.process_file") as process_file_mock,
+        ):
+            ext.main()
+
+        process_file_mock.assert_called_once()
+
+    def test_main_returns_when_no_supported_files(self, tmp_path):
+        import loctran.extract as ext
+
+        source = tmp_path / "doc.unsupported"
+        source.write_text("x", encoding="utf-8")
+
+        with (
+            patch("sys.argv", ["extract", str(source)]),
+            patch("loctran.extract.check_dependencies", return_value=True),
+            patch("loctran.extract.process_file") as process_file_mock,
+        ):
+            ext.main()
+
+        process_file_mock.assert_not_called()
     def test_returns_empty_on_exception(self):
         import loctran.extract as ext
         with patch("loctran.extract._get_pdfplumber", side_effect=RuntimeError("no pdfplumber")):

@@ -7,10 +7,10 @@ import socket
 import subprocess
 import sys
 
-
 # ---------------------------------------------------------------------------
 # Low-level probe functions
 # ---------------------------------------------------------------------------
+
 
 def _check_tesseract() -> tuple[bool, str]:
     """Return (ok, detail_string)."""
@@ -21,12 +21,23 @@ def _check_tesseract() -> tuple[bool, str]:
                 path = candidate
                 break
     if not path:
-        return False, ""
+        return (
+            False,
+            "Tesseract is not installed or not on PATH. Install it with: brew install tesseract tesseract-lang",
+        )
     try:
-        out = subprocess.check_output([path, "--version"], stderr=subprocess.STDOUT, text=True)
+        out = subprocess.check_output(
+            [path, "--version"], stderr=subprocess.STDOUT, text=True
+        )
         version = out.splitlines()[0].split()[-1] if out else "unknown"
-        lang_out = subprocess.check_output([path, "--list-langs"], stderr=subprocess.STDOUT, text=True)
-        langs = [ln.strip() for ln in lang_out.splitlines() if ln.strip() and not ln.startswith("List")]
+        lang_out = subprocess.check_output(
+            [path, "--list-langs"], stderr=subprocess.STDOUT, text=True
+        )
+        langs = [
+            ln.strip()
+            for ln in lang_out.splitlines()
+            if ln.strip() and not ln.startswith("List")
+        ]
         lang_str = " ".join(langs[:4])
         if len(langs) > 4:
             lang_str += f" +{len(langs) - 4}"
@@ -39,11 +50,13 @@ def _check_ollama() -> tuple[bool, str]:
     """Return (running, detail_string)."""
     try:
         with socket.create_connection(("127.0.0.1", 11434), timeout=1.0):
-            running = True
+            pass
     except OSError:
-        return False, "not running"
+        return False, "Ollama is not running. Start it with: ollama serve"
     try:
-        out = subprocess.check_output(["ollama", "--version"], stderr=subprocess.DEVNULL, text=True)
+        out = subprocess.check_output(
+            ["ollama", "--version"], stderr=subprocess.DEVNULL, text=True
+        )
         version = out.strip().split()[-1]
         return True, f"{version}  (running)"
     except Exception:
@@ -54,17 +67,18 @@ def _check_model(model_name: str) -> tuple[bool, str]:
     """Return (pulled, detail_string)."""
     try:
         import ollama  # type: ignore
+
         models_resp = ollama.list()
         models = models_resp.get("models", [])
         for m in models:
             name = m.get("model", "") or m.get("name", "")
             if name.startswith(model_name):
                 size_bytes = m.get("size", 0)
-                size_gb = size_bytes / (1024 ** 3)
+                size_gb = size_bytes / (1024**3)
                 return True, f"pulled ({size_gb:.1f} GB)"
-        return False, f"NOT pulled  →  ollama pull {model_name}"
+        return False, f"Model is not pulled. Run: ollama pull {model_name}"
     except Exception:
-        return False, "ollama not reachable"
+        return False, "Ollama is not reachable. Start it with: ollama serve"
 
 
 def _os_install_hints() -> list[str]:
@@ -94,13 +108,14 @@ def _os_install_hints() -> list[str]:
 # Doctor entry point
 # ---------------------------------------------------------------------------
 
+
 def run_doctor() -> int:
-    from loctran import __version__  # noqa: PLC0415
+    from loctran import __version__
 
     try:
+        from rich import box
         from rich.console import Console
         from rich.table import Table
-        from rich import box
 
         console = Console()
         console.print(f"\n[bold]loctran-doctor[/bold] v{__version__}")
@@ -113,21 +128,24 @@ def run_doctor() -> int:
 
         all_ok = True
 
-        table.add_row("[green]✓[/green]", "Python",
-                      f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+        table.add_row(
+            "[green]✓[/green]",
+            "Python",
+            f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        )
 
         tess_ok, tess_ver = _check_tesseract()
         if tess_ok:
             table.add_row("[green]✓[/green]", "Tesseract", tess_ver)
         else:
-            table.add_row("[red]✗[/red]", "Tesseract", "NOT FOUND")
+            table.add_row("[red]✗[/red]", "Tesseract", tess_ver)
             all_ok = False
 
         ollama_ok, ollama_ver = _check_ollama()
         if ollama_ok:
             table.add_row("[green]✓[/green]", "Ollama", ollama_ver)
         else:
-            table.add_row("[red]✗[/red]", "Ollama", "NOT RUNNING  →  ollama serve")
+            table.add_row("[red]✗[/red]", "Ollama", ollama_ver)
             all_ok = False
 
         for model in ("qwen2.5:7b", "qwen2.5:32b"):
@@ -161,7 +179,9 @@ def run_doctor() -> int:
         print(f"[OK ] Python         {py.major}.{py.minor}.{py.micro}")
 
         tess_ok, tess_ver = _check_tesseract()
-        print(f"[{'OK ' if tess_ok else 'ERR'}] Tesseract      {tess_ver or 'NOT FOUND'}")
+        print(
+            f"[{'OK ' if tess_ok else 'ERR'}] Tesseract      {tess_ver or 'NOT FOUND'}"
+        )
         if not tess_ok:
             all_ok = False
 
@@ -191,4 +211,3 @@ def run_doctor() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(run_doctor())
-

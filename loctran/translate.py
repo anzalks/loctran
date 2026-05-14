@@ -1,19 +1,18 @@
-import os
-import sys
-import re
-import ast
-import shutil
 import argparse
+import ast
 import json
-import time
-import subprocess
 import logging
+import os
+import re
+import sys
+import time
 from pathlib import Path
-from tqdm import tqdm
 
 DEBUG_MODE = os.getenv("LOCTRAN_DEBUG")
 logger = logging.getLogger("loctran.translate")
-DEFAULT_MODEL = "qwen2.5:7b"  # ~4 GB; use qwen2.5:32b for higher quality (requires ~20 GB VRAM)
+DEFAULT_MODEL = (
+    "qwen2.5:7b"  # ~4 GB; use qwen2.5:32b for higher quality (requires ~20 GB VRAM)
+)
 DEFAULT_LANG = "French"
 BATCH_SIZE = 5
 
@@ -22,7 +21,9 @@ def _get_ollama():
     try:
         import ollama  # type: ignore
     except ImportError as exc:
-        raise RuntimeError("Missing optional dependency 'ollama'. Install with: pip install loctran[server]") from exc
+        raise RuntimeError(
+            "Missing optional dependency 'ollama'. Install with: pip install loctran[server]"
+        ) from exc
     return ollama
 
 
@@ -35,31 +36,33 @@ def check_ollama_connection(model_name, retries=3):
         logger.error(f"Ollama connection check failed: {e}")
         return False
 
+
 def list_models():
     """Returns a list of available Ollama models."""
     try:
-        return [m['model'] for m in _get_ollama().list()['models']]
+        return [m["model"] for m in _get_ollama().list()["models"]]
     except Exception:
         return [DEFAULT_MODEL]
+
 
 def _extract_json_array(content):
     """Try multiple strategies to extract a JSON array from an LLM response."""
     # Strategy 1: ```json ... ``` fence
-    m = re.search(r'```json\s*([\s\S]*?)\s*```', content)
+    m = re.search(r"```json\s*([\s\S]*?)\s*```", content)
     if m:
         try:
             return json.loads(m.group(1))
         except json.JSONDecodeError:
             pass
     # Strategy 2: generic ``` ... ``` fence
-    m = re.search(r'```\s*([\s\S]*?)\s*```', content)
+    m = re.search(r"```\s*([\s\S]*?)\s*```", content)
     if m:
         try:
             return json.loads(m.group(1))
         except json.JSONDecodeError:
             pass
     # Strategy 3: first [ ... ] block in the response
-    m = re.search(r'(\[[\s\S]*\])', content)
+    m = re.search(r"(\[[\s\S]*\])", content)
     if m:
         try:
             return json.loads(m.group(1))
@@ -102,31 +105,36 @@ def _translate_chunk(chunk, model, target_lang):
 
     # Attempt 1: batch JSON
     try:
-        logger.debug(f"Chunk batch: {len(chunk)} segs → model='{model}', lang='{target_lang}'")
+        logger.debug(
+            f"Chunk batch: {len(chunk)} segs → model='{model}', lang='{target_lang}'"
+        )
         ollama = _get_ollama()
-        res = ollama.chat(model=model, messages=[{'role': 'user', 'content': prompt}])
-        content = res['message']['content']
+        res = ollama.chat(model=model, messages=[{"role": "user", "content": prompt}])
+        content = res["message"]["content"]
         logger.debug(f"Chunk raw response (first 300 chars): {content[:300]}")
         data = _extract_json_array(content)
         if len(data) == len(chunk):
             # Use positional mapping — the model often resets IDs to 0-based or
             # mixes old/new IDs; positional is always safe since order is preserved
-            results = {chunk[i]['id']: data[i]['translation'] for i in range(len(data))}
-            logger.debug(f"Chunk batch OK (positional): {len(results)}/{len(chunk)} translated")
+            results = {chunk[i]["id"]: data[i]["translation"] for i in range(len(data))}
+            logger.debug(
+                f"Chunk batch OK (positional): {len(results)}/{len(chunk)} translated"
+            )
         elif len(data) > 0:
             # Partial response — take whatever matches by ID, remap the rest by position
-            expected_ids = [c['id'] for c in chunk]
-            id_to_trans = {item['id']: item['translation'] for item in data}
+            id_to_trans = {item["id"]: item["translation"] for item in data}
             results = {}
             for i, c in enumerate(chunk):
-                if c['id'] in id_to_trans:
-                    results[c['id']] = id_to_trans[c['id']]
+                if c["id"] in id_to_trans:
+                    results[c["id"]] = id_to_trans[c["id"]]
                 elif i < len(data):
-                    results[c['id']] = data[i]['translation']
-            logger.debug(f"Chunk batch partial ({len(data)} returned, mapped {len(results)}/{len(chunk)})")
+                    results[c["id"]] = data[i]["translation"]
+            logger.debug(
+                f"Chunk batch partial ({len(data)} returned, mapped {len(results)}/{len(chunk)})"
+            )
         else:
             results = {}
-            logger.warning(f"Chunk batch returned empty data")
+            logger.warning("Chunk batch returned empty data")
         return results
     except Exception as e:
         logger.warning(
@@ -143,25 +151,32 @@ def _translate_chunk(chunk, model, target_lang):
         for attempt in range(3):  # up to 3 tries per segment
             try:
                 ollama = _get_ollama()
-                res = ollama.chat(model=model, messages=[{
-                    'role': 'user',
-                    'content': (
-                        f"Translate the following text to {target_lang}. "
-                        f"Reply with ONLY the translation, no explanation:\n{item['text']}"
-                    )
-                }])
-                translated = res['message']['content'].strip()
-                logger.debug(f"Sequential OK seg {item['id']} (attempt {attempt+1}): '{item['text'][:50]}'")
+                res = ollama.chat(
+                    model=model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Translate the following text to {target_lang}. "
+                                f"Reply with ONLY the translation, no explanation:\n{item['text']}"
+                            ),
+                        }
+                    ],
+                )
+                translated = res["message"]["content"].strip()
+                logger.debug(
+                    f"Sequential OK seg {item['id']} (attempt {attempt + 1}): '{item['text'][:50]}'"
+                )
                 break
             except Exception as e:
                 wait = 0.5 * (attempt + 1)
                 logger.warning(
-                    f"Sequential seg {item['id']} attempt {attempt+1}/3 failed "
+                    f"Sequential seg {item['id']} attempt {attempt + 1}/3 failed "
                     f"(text='{item['text'][:50]}'): {e!r} — retrying in {wait}s"
                 )
                 time.sleep(wait)
         if translated is not None:
-            results[item['id']] = translated
+            results[item["id"]] = translated
         else:
             logger.error(
                 f"Sequential failed all retries for seg {item['id']} "
@@ -180,7 +195,11 @@ def translate_segments(segments, model, target_lang, batch_size: int = BATCH_SIZ
     if not segments:
         return {}
 
-    simple_segments = [{"id": i, "text": s['text']} for i, s in enumerate(segments) if s['text'].strip()]
+    simple_segments = [
+        {"id": i, "text": s["text"]}
+        for i, s in enumerate(segments)
+        if s["text"].strip()
+    ]
     if not simple_segments:
         return {}
 
@@ -191,8 +210,10 @@ def translate_segments(segments, model, target_lang, batch_size: int = BATCH_SIZ
 
     results = {}
     for chunk_idx, chunk_start in enumerate(range(0, len(simple_segments), batch_size)):
-        chunk = simple_segments[chunk_start: chunk_start + batch_size]
-        logger.debug(f"Processing chunk {chunk_idx+1} ({len(chunk)} segs, ids {chunk[0]['id']}\u2013{chunk[-1]['id']}")
+        chunk = simple_segments[chunk_start : chunk_start + batch_size]
+        logger.debug(
+            f"Processing chunk {chunk_idx + 1} ({len(chunk)} segs, ids {chunk[0]['id']}\u2013{chunk[-1]['id']}"
+        )
         chunk_results = _translate_chunk(chunk, model, target_lang)
         results.update(chunk_results)
         # Brief pause between chunks so Ollama doesn't queue-drop under load
@@ -202,7 +223,7 @@ def translate_segments(segments, model, target_lang, batch_size: int = BATCH_SIZ
     total = len(simple_segments)
 
     # Gap-fill pass: retry any segment that still has no translation (truncated batch response)
-    missing = [s for s in simple_segments if s['id'] not in results]
+    missing = [s for s in simple_segments if s["id"] not in results]
     if missing:
         logger.debug(f"Gap-fill: retrying {len(missing)} missing segments individually")
         time.sleep(0.5)
@@ -210,19 +231,28 @@ def translate_segments(segments, model, target_lang, batch_size: int = BATCH_SIZ
             for attempt in range(3):
                 try:
                     ollama = _get_ollama()
-                    res = ollama.chat(model=model, messages=[{
-                        'role': 'user',
-                        'content': (
-                            f"Translate the following text to {target_lang}. "
-                            f"Reply with ONLY the translation, no explanation:\n{item['text']}"
-                        )
-                    }])
-                    results[item['id']] = res['message']['content'].strip()
-                    logger.debug(f"Gap-fill OK seg {item['id']} (attempt {attempt+1})")
+                    res = ollama.chat(
+                        model=model,
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"Translate the following text to {target_lang}. "
+                                    f"Reply with ONLY the translation, no explanation:\n{item['text']}"
+                                ),
+                            }
+                        ],
+                    )
+                    results[item["id"]] = res["message"]["content"].strip()
+                    logger.debug(
+                        f"Gap-fill OK seg {item['id']} (attempt {attempt + 1})"
+                    )
                     break
                 except Exception as e:
                     wait = 0.5 * (attempt + 1)
-                    logger.warning(f"Gap-fill seg {item['id']} attempt {attempt+1}/3 failed: {e!r} — retrying in {wait}s")
+                    logger.warning(
+                        f"Gap-fill seg {item['id']} attempt {attempt + 1}/3 failed: {e!r} — retrying in {wait}s"
+                    )
                     time.sleep(wait)
             time.sleep(0.2)
 
@@ -234,14 +264,17 @@ def translate_segments(segments, model, target_lang, batch_size: int = BATCH_SIZ
             f"Check that Ollama is running and the model is loaded."
         )
     elif got < total:
-        logger.warning(f"Partial translation: {total - got} of {total} segments could not be translated.")
+        logger.warning(
+            f"Partial translation: {total - got} of {total} segments could not be translated."
+        )
     else:
         logger.debug(f"translate_segments complete: {got}/{total} translated.")
 
     return results
 
+
 def get_overlay_html(width, height, image_url, segments):
-    """Generates the HTML for the overlay container."""
+    """Build an HTML overlay that places translated text boxes over the page image."""
     aspect_ratio = width / height if height > 0 else 1
 
     html = f"""
@@ -250,8 +283,9 @@ def get_overlay_html(width, height, image_url, segments):
     """
 
     for s in segments:
-        bbox = s['bbox']
-        if not s.get('translation'): continue
+        bbox = s["bbox"]
+        if not s.get("translation"):
+            continue
 
         left_p = (bbox[0] / width) * 100
         top_p = (bbox[1] / height) * 100
@@ -262,15 +296,17 @@ def get_overlay_html(width, height, image_url, segments):
         # text size from the original. For perspective/angled images, segments
         # store min_word_height — use that when available so text always fits.
         effective_height_p = height_p
-        if s.get('min_word_height') and height > 0:
-            min_h_p = (s['min_word_height'] / height) * 100
+        if s.get("min_word_height") and height > 0:
+            min_h_p = (s["min_word_height"] / height) * 100
             effective_height_p = min_h_p
 
         # Convert height percentage to font-size in container-query units.
         # Box height in px = (container_width / aspect_ratio) * (height_p / 100)
         # In cqw: font-size = (effective_height_p / aspect_ratio) cqw
         # Use 0.85 factor: font-size includes descenders, bbox is cap-height only
-        font_size_expr = f"calc(({effective_height_p:.4f} / {aspect_ratio:.4f}) * 0.85cqw)"
+        font_size_expr = (
+            f"calc(({effective_height_p:.4f} / {aspect_ratio:.4f}) * 0.85cqw)"
+        )
 
         html += f"""
         <div class="translated-box" style="
@@ -293,15 +329,18 @@ def get_overlay_html(width, height, image_url, segments):
             white-space: nowrap;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             z-index: 10;
-        " title="{s['text']}">
-            {s['translation']}
+        " title="{s["text"]}">
+            {s["translation"]}
         </div>
         """
 
     html += "</div>"
     return html
 
-def process_folder(folder_path, lang, model, progress_callback=None, batch_size: int = BATCH_SIZE):
+
+def process_folder(
+    folder_path, lang, model, progress_callback=None, batch_size: int = BATCH_SIZE
+):
     folder_path = Path(folder_path)
     json_path = folder_path / "input_data.json"
     html_path = folder_path / f"{folder_path.name}.html"
@@ -312,16 +351,21 @@ def process_folder(folder_path, lang, model, progress_callback=None, batch_size:
 
     # Verify Ollama is reachable before doing any work
     if not check_ollama_connection(model):
-        msg = f"Cannot reach Ollama (model='{model}'). Translation aborted — no HTML report will be written."
+        msg = (
+            f"Cannot reach Ollama (model='{model}'). Start Ollama with `ollama serve` "
+            f"and pull the model with `ollama pull {model}` before retrying."
+        )
         logger.error(msg)
         if progress_callback:
             progress_callback(f"Error: {msg}", 0)
         raise RuntimeError(msg)
 
-    with open(json_path, 'r') as f:
+    with open(json_path) as f:
         data = json.load(f)
 
-    logger.info(f"Starting translation of {len(data)} slides → lang='{lang}', model='{model}'")
+    logger.info(
+        f"Starting translation of {len(data)} slides → lang='{lang}', model='{model}'"
+    )
 
     # Start HTML — include text-only styles alongside the overlay styles
     with open(html_path, "w") as f:
@@ -400,29 +444,37 @@ def process_folder(folder_path, lang, model, progress_callback=None, batch_size:
         <body>
         <h1>Translation Report</h1>
         """)
-        
+
     # Process
     total = len(data)
     for i, slide in enumerate(data):
-        slide_num = slide['slide_num']
-        segments = slide.get('segments', [])
-        img_path = slide['image_path']
+        slide_num = slide["slide_num"]
+        segments = slide.get("segments", [])
+        img_path = slide["image_path"]
 
         # ── TEXT-ONLY slide (no image, e.g. from a .txt file) ──────────────
         if not img_path:
-            segments_to_trans = [s for s in segments if s.get('text', '').strip()]
+            segments_to_trans = [s for s in segments if s.get("text", "").strip()]
             if not segments_to_trans:
                 continue
-            translations = translate_segments(segments_to_trans, model, lang, batch_size=batch_size)
+            translations = translate_segments(
+                segments_to_trans, model, lang, batch_size=batch_size
+            )
             for idx, s in enumerate(segments_to_trans):
-                s['translation'] = translations.get(idx, "")
+                s["translation"] = translations.get(idx, "")
 
-            original_text = "\n\n".join(s['text'] for s in segments_to_trans)
+            original_text = "\n\n".join(s["text"] for s in segments_to_trans)
             translated_text = "\n\n".join(
-                s['translation'] if s.get('translation') else f"[untranslated: {s['text'][:40]}…]"
+                s["translation"]
+                if s.get("translation")
+                else f"[untranslated: {s['text'][:40]}…]"
                 for s in segments_to_trans
             )
-            translated_cls = "text-translated" if any(s.get('translation') for s in segments_to_trans) else "text-missing"
+            translated_cls = (
+                "text-translated"
+                if any(s.get("translation") for s in segments_to_trans)
+                else "text-missing"
+            )
 
             with open(html_path, "a") as f:
                 f.write(f"""
@@ -438,20 +490,26 @@ def process_folder(folder_path, lang, model, progress_callback=None, batch_size:
             </div>
             """)
             if progress_callback:
-                progress_callback(f"Processed paragraph {slide_num}", int((i + 1) / total * 100))
+                progress_callback(
+                    f"Processed paragraph {slide_num}", int((i + 1) / total * 100)
+                )
             continue
 
         # ── IMAGE slide (PDF / image file) ─────────────────────────────────
         rel_img = f"images/{Path(img_path).name}"
 
         # Translate meaningful segments
-        segments_to_trans = [s for s in segments if len(s['text']) > 2]
+        segments_to_trans = [s for s in segments if len(s["text"]) > 2]
 
         if not segments_to_trans:
-            logger.debug(f"Slide {slide_num}: no translatable segments, skipping translation call.")
+            logger.debug(
+                f"Slide {slide_num}: no translatable segments, skipping translation call."
+            )
             translations = {}
         else:
-            translations = translate_segments(segments_to_trans, model, lang, batch_size=batch_size)
+            translations = translate_segments(
+                segments_to_trans, model, lang, batch_size=batch_size
+            )
             if not translations:
                 logger.warning(
                     f"Slide {slide_num}: translate_segments returned empty results for "
@@ -460,16 +518,17 @@ def process_folder(folder_path, lang, model, progress_callback=None, batch_size:
 
         # Update segments with translation
         for idx, s in enumerate(segments_to_trans):
-            s['translation'] = translations.get(idx, "")
+            s["translation"] = translations.get(idx, "")
 
         # Get Image Dims (for percentage calc)
         from PIL import Image
+
         with Image.open(img_path) as img:
             w, h = img.size
-            
+
         # Generate Overlay HTML
         overlay_html = get_overlay_html(w, h, rel_img, segments_to_trans)
-        
+
         # Append to Report
         with open(html_path, "a") as f:
             f.write(f"""
@@ -484,19 +543,24 @@ def process_folder(folder_path, lang, model, progress_callback=None, batch_size:
                 </div>
             </div>
             """)
-            
+
         if progress_callback:
-            progress_callback(f"Processed slide {slide_num}", int((i+1)/total * 100))
-            
+            progress_callback(
+                f"Processed slide {slide_num}", int((i + 1) / total * 100)
+            )
+
     with open(html_path, "a") as f:
         f.write("</body></html>")
 
+
 def main():
     parser = argparse.ArgumentParser(description="LLM Translator")
-    parser.add_argument("input_path", help="Path to 'outputs' folder or specific document folder")
+    parser.add_argument(
+        "input_path", help="Path to 'outputs' folder or specific document folder"
+    )
     parser.add_argument("--lang", default=DEFAULT_LANG, help="Source language")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Ollama model")
-    
+
     args = parser.parse_args()
 
     # Configure logging: DEBUG when LOCTRAN_DEBUG set, else WARNING
@@ -506,7 +570,7 @@ def main():
         format="%(levelname)s [%(name)s] %(message)s",
         stream=sys.stderr,
     )
-    
+
     # Check connection
     try:
         _get_ollama().list()
@@ -515,7 +579,7 @@ def main():
         return
 
     input_path = Path(args.input_path).resolve()
-    
+
     if (input_path / "input_data.json").exists():
         process_folder(input_path, args.lang, args.model)
     else:
@@ -523,6 +587,7 @@ def main():
         subdirs = [d for d in input_path.iterdir() if d.is_dir()]
         for d in subdirs:
             process_folder(d, args.lang, args.model)
+
 
 if __name__ == "__main__":
     main()

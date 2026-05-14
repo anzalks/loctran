@@ -3,13 +3,13 @@
 Jobs are kept in an in-process dict for fast reads; every write goes through
 to the database so state survives a restart.
 """
+
 from __future__ import annotations
 
 import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Optional
 
 DB_PATH = Path.home() / ".loctran" / "jobs.db"
 
@@ -53,6 +53,7 @@ def _connect() -> sqlite3.Connection:
 # CRUD
 # ---------------------------------------------------------------------------
 
+
 def upsert_job(job: dict) -> None:
     """Write job to cache and database."""
     job_id: str = job["id"]
@@ -66,7 +67,7 @@ def upsert_job(job: dict) -> None:
     con.close()
 
 
-def get_job(job_id: str) -> Optional[dict]:
+def get_job(job_id: str) -> dict | None:
     """Return a job dict or None if not found."""
     if job_id in _cache:
         return _cache[job_id]
@@ -87,16 +88,23 @@ def list_active_jobs() -> list[dict]:
 
 
 def cleanup_old_jobs(retention_seconds: int = 3600) -> int:
-    """Delete completed/failed jobs older than *retention_seconds*. Returns count deleted."""
+    """Delete completed or failed job rows older than `retention_seconds`.
+
+    This removes persisted job records from SQLite and clears matching cache
+    entries. It does not delete user files from disk.
+    """
     cutoff = time.time() - retention_seconds
     to_delete = [
-        jid for jid, j in list(_cache.items())
+        jid
+        for jid, j in list(_cache.items())
         if j.get("status") in {"completed", "failed"}
         and j.get("created_at", 0) < cutoff
     ]
     if to_delete:
         con = _connect()
-        con.executemany("DELETE FROM jobs WHERE job_id = ?", [(jid,) for jid in to_delete])
+        con.executemany(
+            "DELETE FROM jobs WHERE job_id = ?", [(jid,) for jid in to_delete]
+        )
         con.commit()
         con.close()
         for jid in to_delete:

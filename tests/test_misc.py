@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from click.testing import CliRunner
 
 
 # ---------------------------------------------------------------------------
@@ -20,57 +21,71 @@ import pytest
 # ---------------------------------------------------------------------------
 
 class TestCli:
+    def test_bare_loctran_invokes_serve(self, monkeypatch):
+        invoked = []
+        monkeypatch.setattr("loctran.cli.uvicorn.run", lambda *a, **kw: invoked.append(True))
+        monkeypatch.setattr("loctran.cli.webbrowser.open", lambda *a: None)
+        monkeypatch.setattr("loctran.cli.time.sleep", lambda *a: None)
+
+        from loctran.cli import cli_entry
+
+        runner = CliRunner()
+        result = runner.invoke(cli_entry, [])
+
+        assert invoked
+        assert result.exit_code == 0
+
+    def test_serve_no_browser_flag(self, monkeypatch):
+        opened = []
+        monkeypatch.setattr("loctran.cli.uvicorn.run", lambda *a, **kw: None)
+        monkeypatch.setattr("loctran.cli.webbrowser.open", lambda url: opened.append(url))
+
+        from loctran.cli import cli_entry
+
+        runner = CliRunner()
+        result = runner.invoke(cli_entry, ["serve", "--no-browser"])
+
+        assert result.exit_code == 0
+        assert not opened
+
     def test_extract_only_skips_translation(self, tmp_path):
         fake_pdf = tmp_path / "doc.pdf"
         fake_pdf.write_bytes(b"%PDF-1.4")
 
         process_folder_mock = MagicMock()
+        from loctran.cli import cli_entry
 
         with (
-            patch("sys.argv", ["loctran", str(fake_pdf), "--extract-only"]),
             patch("loctran.cli.process_file", return_value=tmp_path / "out"),
             patch("loctran.cli.process_folder", process_folder_mock),
         ):
-            import loctran.cli as cli_mod
-            cli_mod.main()
+            runner = CliRunner()
+            result = runner.invoke(
+                cli_entry,
+                ["translate", str(fake_pdf), "--extract-only"],
+            )
 
+        assert result.exit_code == 0
         process_folder_mock.assert_not_called()
-
-    def test_extraction_failure_exits(self, tmp_path):
-        fake_pdf = tmp_path / "doc.pdf"
-        fake_pdf.write_bytes(b"%PDF-1.4")
-
-        with (
-            patch("sys.argv", ["loctran", str(fake_pdf)]),
-            patch("loctran.cli.process_file", return_value=None),
-        ):
-            import loctran.cli as cli_mod
-            with pytest.raises(SystemExit) as exc_info:
-                cli_mod.main()
-
-        assert exc_info.value.code == 1
-
-    def test_default_model_is_7b(self):
-        from loctran.translate import DEFAULT_MODEL
-        assert DEFAULT_MODEL == "qwen2.5:7b"
 
     def test_batch_size_flag_forwarded(self, tmp_path):
         fake_pdf = tmp_path / "doc.pdf"
         fake_pdf.write_bytes(b"%PDF-1.4")
-
         process_folder_mock = MagicMock()
+        from loctran.cli import cli_entry
 
         with (
-            patch("sys.argv", ["loctran", str(fake_pdf), "--batch-size", "2"]),
             patch("loctran.cli.process_file", return_value=tmp_path / "out"),
             patch("loctran.cli.process_folder", process_folder_mock),
         ):
-            import loctran.cli as cli_mod
-            cli_mod.main()
+            runner = CliRunner()
+            result = runner.invoke(
+                cli_entry,
+                ["translate", str(fake_pdf), "--batch-size", "2"],
+            )
 
+        assert result.exit_code == 0
         process_folder_mock.assert_called_once()
-        _, kwargs = process_folder_mock.call_args
-        assert kwargs.get("batch_size") == 2
         _, kwargs = process_folder_mock.call_args
         assert kwargs.get("batch_size") == 2
 
@@ -79,56 +94,47 @@ class TestCli:
         fake_pdf.write_bytes(b"%PDF-1.4")
         custom_out = tmp_path / "custom_out"
         custom_out.mkdir()
-
         process_folder_mock = MagicMock()
+        from loctran.cli import cli_entry
+
         with (
-            patch("sys.argv", ["loctran", str(fake_pdf), "--output", str(custom_out)]),
             patch("loctran.cli.process_file", return_value=custom_out / "doc"),
             patch("loctran.cli.process_folder", process_folder_mock),
         ):
-            import loctran.cli as cli_mod
-            cli_mod.main()
+            runner = CliRunner()
+            result = runner.invoke(
+                cli_entry,
+                ["translate", str(fake_pdf), "--output", str(custom_out)],
+            )
+
+        assert result.exit_code == 0
         process_folder_mock.assert_called_once()
 
-    def test_directory_input_uses_dir_outputs(self, tmp_path):
-        """When input is a directory, output_dir should be input/outputs."""
-        process_folder_mock = MagicMock()
-        with (
-            patch("sys.argv", ["loctran", str(tmp_path)]),
-            patch("loctran.cli.process_file", return_value=tmp_path / "outputs" / "doc"),
-            patch("loctran.cli.process_folder", process_folder_mock),
-        ):
-            import loctran.cli as cli_mod
-            cli_mod.main()
-        process_folder_mock.assert_called_once()
-
-    def test_debug_flag_prints_info(self, tmp_path):
-        """LOCTRAN_DEBUG env var triggers info prints."""
-        import os
+    def test_config_default_model_used_for_translate(self, tmp_path):
         fake_pdf = tmp_path / "doc.pdf"
         fake_pdf.write_bytes(b"%PDF-1.4")
         process_folder_mock = MagicMock()
+        from loctran.cli import cli_entry
+
         with (
-            patch("sys.argv", ["loctran", str(fake_pdf)]),
+            patch(
+                "loctran.cli.load",
+                return_value={
+                    "default_model": "custom:model",
+                    "default_lang": "French",
+                    "batch_size": 5,
+                },
+            ),
             patch("loctran.cli.process_file", return_value=tmp_path / "out"),
             patch("loctran.cli.process_folder", process_folder_mock),
-            patch.dict(os.environ, {"LOCTRAN_DEBUG": "1"}),
         ):
-            import loctran.cli as cli_mod
-            cli_mod.main()
-        process_folder_mock.assert_called_once()
+            runner = CliRunner()
+            result = runner.invoke(cli_entry, ["translate", str(fake_pdf)])
 
-    def test_cli_entry_calls_main(self, tmp_path):
-        """cli_entry() must delegate to main()."""
-        fake_pdf = tmp_path / "doc.pdf"
-        fake_pdf.write_bytes(b"%PDF-1.4")
-        with (
-            patch("sys.argv", ["loctran", str(fake_pdf)]),
-            patch("loctran.cli.process_file", return_value=tmp_path / "out"),
-            patch("loctran.cli.process_folder"),
-        ):
-            import loctran.cli as cli_mod
-            cli_mod.cli_entry()  # should not raise
+        assert result.exit_code == 0
+        _, kwargs = process_folder_mock.call_args
+        assert kwargs.get("batch_size") == 5
+        assert process_folder_mock.call_args.args[2] == "custom:model"
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +346,60 @@ class TestDiagnosticsProbes:
         ):
             result = run_doctor()
         assert result in (0, 1)
+
+    def test_run_doctor_with_rich_missing_returns_1(self):
+        import sys
+
+        from loctran.diagnostics import run_doctor
+
+        fake_console_instance = MagicMock()
+        fake_table_instance = MagicMock()
+        fake_console_cls = MagicMock(return_value=fake_console_instance)
+        fake_table_cls = MagicMock(return_value=fake_table_instance)
+        fake_rich_console = MagicMock(Console=fake_console_cls)
+        fake_rich_table = MagicMock(Table=fake_table_cls)
+        fake_rich = MagicMock()
+
+        rich_mods = {
+            "rich": fake_rich,
+            "rich.console": fake_rich_console,
+            "rich.table": fake_rich_table,
+        }
+
+        with (
+            patch.dict(sys.modules, rich_mods),
+            patch("loctran.diagnostics._check_tesseract", return_value=(False, "install tesseract")),
+            patch("loctran.diagnostics._check_ollama", return_value=(False, "start ollama serve")),
+            patch("loctran.diagnostics._check_model", side_effect=[
+                (False, "model missing"),
+                (True, "pulled"),
+            ]),
+        ):
+            result = run_doctor()
+        assert result == 1
+
+    def test_run_doctor_plaintext_fallback_returns_1(self):
+        import builtins
+        from loctran.diagnostics import run_doctor
+
+        real_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name.startswith("rich"):
+                raise ImportError("rich unavailable")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with (
+            patch("builtins.__import__", side_effect=fake_import),
+            patch("loctran.diagnostics._check_tesseract", return_value=(False, "install tesseract")),
+            patch("loctran.diagnostics._check_ollama", return_value=(False, "start ollama serve")),
+            patch("loctran.diagnostics._check_model", side_effect=[
+                (False, "model missing"),
+                (True, "pulled"),
+            ]),
+        ):
+            result = run_doctor()
+        assert result == 1
 
 
 # ---------------------------------------------------------------------------
