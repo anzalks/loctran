@@ -512,15 +512,20 @@ async def upload_file(file: UploadFile = File(...)):
 
     try:
         size = 0
+        oversized = False
         with open(file_path, "wb") as buffer:
             while content := await file.read(1024 * 1024):  # 1MB chunks
                 size += len(content)
                 if size > MAX_FILE_SIZE:
-                    file_path.unlink(missing_ok=True)
-                    raise HTTPException(
-                        413, f"File too large (Max {MAX_FILE_SIZE / 1024 / 1024}MB)"
-                    )
+                    oversized = True
+                    break
                 buffer.write(content)
+
+        if oversized:
+            file_path.unlink(missing_ok=True)
+            raise HTTPException(
+                413, f"File too large (Max {MAX_FILE_SIZE / 1024 / 1024}MB)"
+            )
 
         return {"filename": file.filename, "saved_path": str(file_path), "id": file_id}
     except HTTPException:
