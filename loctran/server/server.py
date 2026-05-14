@@ -365,6 +365,19 @@ def _start_ollama_if_needed() -> None:
         stderr=subprocess.DEVNULL,
     )
     logger.info(f"Ollama started (PID {_ollama_proc.pid}).")
+    import time
+    import ollama as _ollama
+
+    logger.info(f"Ollama started. Waiting up to 15 seconds for API to initialize...")  # noqa: F541
+    for _ in range(15):
+        time.sleep(1)
+        try:
+            _ollama.list()
+            logger.info("Ollama API is ready.")
+            return
+        except Exception:
+            continue
+    logger.error("Ollama failed to initialize its API within 15 seconds.")
 
 
 def check_ai_engine():
