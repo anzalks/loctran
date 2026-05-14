@@ -49,10 +49,21 @@ HANDOFF_MODEL_STATE.md
 AGENTS.md
 version_bump.py
 setup.py
+
+# AI / agent / IDE metadata
 .agent/
+.cursorrules
 SKILL.md
 rules.md
-.cursorrules
+**/SKILL.md
+**/rules.md
+**/.agent/
+**/.agent/**
+**/.cursorrules
+**/.prompt.md
+**/*.agent.md
+**/copilot-instructions.md
+**/.github/copilot-instructions.md
 
 
 # IDEs

@@ -1,60 +1,18 @@
-# Loctran — cursor rules
+# Loctran repository rules
 
-## Project identity
-- Package: loctran (v0.1.1b1, Python ≥ 3.9)
-- Purpose: local AI PDF translator — no cloud calls, no API keys
-- License: Apache 2.0
+## Repository hygiene
+- Never create random Markdown files in the root directory. Maintain strict open-source repository hygiene. Do not commit internal AI thought processes to the codebase.
+- Store agent guidance only in this file.
+- Keep generated or local-only artifacts out of version control.
 
-## Layout
-loctran/
-  cli.py            # Click entry points (loctran translate, loctran doctor)
-  extract.py        # OCR + segmentation (Tesseract, pdfplumber, pypdfium2)
-  translate.py      # LLM translation + HTML overlay (Ollama)
-  diagnostics.py    # Health checks (loctran doctor)
-  server/
-    server.py       # FastAPI app + job orchestration
-    compress.py     # PDF / image compression
-    store.py        # SQLite job persistence
-tests/              # pytest (≥70 % coverage gate)
+## Engineering standards
+- Use type hints on public Python functions.
+- Keep code ruff-clean and format with `ruff format`.
+- Prefer `pathlib.Path` over string path manipulation.
+- Use async patterns for I/O-bound server code.
+- Avoid polling for critical realtime state when WebSockets are available.
 
-## Style rules (enforced by ruff — do not contradict)
-- Line length: 88
-- Formatter: ruff format (not black)
-- Import order: ruff (isort-compatible), stdlib → third-party → local
-- Type hints: required on all public functions (from __future__ import annotations)
-- Docstrings: Google style, one-line summary then blank line then body if needed
-- No commented-out code
-- No bare except: — always name the exception
-
-## Naming
-- Functions: snake_case verbs  (extract_segments, run_pipeline)
-- Classes: PascalCase nouns    (JobDict, CompressResult)
-- Constants: SCREAMING_SNAKE   (DEFAULT_MODEL, JOB_RETENTION_SECONDS)
-- Private helpers: leading _   (_start_ollama_if_needed)
-- No abbreviations except: src, dst, pdf, ocr, llm, html, url, db
-
-## External dependencies
-- Never import from app.* or translate.* at module level in extract.py (circular)
-- ollama, pytesseract, pdfplumber, pypdfium2 are always available in runtime env
-- rich is available; use it for any terminal output (no bare print in non-test code)
-- Never add new dependencies without updating pyproject.toml AND requirements comment
-
-## Testing
-- Mock Ollama calls with unittest.mock.patch("ollama.chat")
-- Mock Tesseract calls with unittest.mock.patch("pytesseract.image_to_data")
-- Use pytest tmp_path for any file I/O
-- Do not write to the real uploads/ or outputs/ directories in tests
-
-## Forbidden patterns
-- pkill, killall, os.system — use subprocess.Popen with explicit PID tracking
-- shutil.rmtree without confirming path is inside tmp_path or the loctran data dir
-- print() outside of tests or __main__ blocks — use rich.console or logging
-- Hardcoded paths like /home/user or C:\Users — always use pathlib.Path.home()
-- String formatting with % — use f-strings
-- Never create random Markdown files (like SKILL.md or rules.md) in the root directory. Maintain strict open-source repository hygiene. Do not commit internal AI thought processes to the codebase.
-- Never create random Markdown files (like SKILL.md or rules.md) in the root directory. Maintain strict open-source repository hygiene. Do not commit internal AI thought processes to the codebase.
-
-## Git
-- Commit style: conventional commits (feat:, fix:, docs:, chore:, test:, refactor:)
-- Branch style: feat/short-description, fix/short-description
-- Never commit uploads/, outputs/, dist/, *.egg-info/, __pycache__/
+## Safety and portability
+- Validate user-provided paths and keep file operations inside allowed directories.
+- Keep behavior cross-platform (macOS, Linux, Windows).
+- Use clear logging and do not swallow exceptions.

@@ -10,8 +10,13 @@ permissions:
   id-token: write
 
 jobs:
+  ci:
+    name: CI Gate
+    uses: ./.github/workflows/ci.yml
+
   build_and_smoke_test:
-    name: Build & Smoke Test (Pre-Publish)
+    name: Build & Smoke Test
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,7 +40,7 @@ jobs:
           python -m venv test_env
           source test_env/bin/activate
           pip install dist/*.whl
-          python -c "import loctran; print('Import successful. Version:', loctran.__version__)"
+          python -c "import loctran; assert loctran.__version__, 'Missing version'; print('Import successful. Version:', loctran.__version__)"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -47,9 +52,6 @@ jobs:
     name: Publish to PyPI
     needs: build_and_smoke_test
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/project/loctran/
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4

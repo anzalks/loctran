@@ -1,6 +1,11 @@
 exclude .cursorrules
 exclude SKILL.md
 exclude rules.md
+exclude .prompt.md
+exclude *.agent.md
+exclude .github/copilot-instructions.md
 exclude .agent
 exclude .agent/*
 prune .agent
+prune .vscode
+prune .idea

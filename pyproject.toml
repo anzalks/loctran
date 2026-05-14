@@ -84,3 +84,13 @@ packages = ["loctran", "loctran.server", "loctran.server.static"]
 
 [tool.setuptools.package-data]
 "loctran.server" = ["static/*"]
+
+[tool.setuptools.exclude-package-data]
+"*" = [
+  ".agent/*",
+  ".cursorrules",
+  "SKILL.md",
+  "rules.md",
+  ".vscode/*",
+  ".idea/*",
+]

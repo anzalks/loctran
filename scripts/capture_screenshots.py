@@ -41,7 +41,9 @@ def _write_minimal_pdf(output_path: Path, lines: list[str]) -> None:
     escaped_lines = []
     for idx, line in enumerate(lines):
         safe = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-        escaped_lines.append(f"BT /F1 12 Tf 50 {y_start - (idx * y_step)} Td ({safe}) Tj ET")
+        escaped_lines.append(
+            f"BT /F1 12 Tf 50 {y_start - (idx * y_step)} Td ({safe}) Tj ET"
+        )
     content_stream = "\n".join(escaped_lines).encode("latin-1", errors="replace")
 
     objects: list[bytes] = []
@@ -397,9 +399,7 @@ def compose_cycle_image(output_dir: Path) -> None:
             len(scaled_images) - 1
         )
         canvas_width = content_width + (2 * padding)
-        canvas_height = (
-            (2 * padding) + target_height + label_margin_top + label_height
-        )
+        canvas_height = (2 * padding) + target_height + label_margin_top + label_height
 
         canvas = Image.new("RGB", (canvas_width, canvas_height), color=bg_color)
         draw = ImageDraw.Draw(canvas)
