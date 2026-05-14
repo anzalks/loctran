@@ -39,12 +39,19 @@
 
 ## 30-second install
 
+The default install includes the Web UI. A plain `pip install loctran` is enough to start the app.
+
 ```bash
-pip install "loctran[ocr,server]"
+pip install loctran
 ollama pull glm-ocr
 ollama pull translategemma:4b
 loctran
 # opens Web UI at http://127.0.0.1:8000
+```
+
+```bash
+# Optional if you want OCR-backed PDF extraction as well
+pip install "loctran[ocr]"
 ```
 
 ```bash
@@ -75,6 +82,8 @@ Each page becomes an image with absolutely-positioned translation boxes sized to
 - **Python** ≥ 3.9
 - **Ollama** running locally — [download](https://ollama.com/download)
 - **Tesseract** — `brew install tesseract tesseract-lang` (macOS) or `apt install tesseract-ocr tesseract-ocr-all` (Linux)
+
+On startup, Loctran will try to start Ollama if it is installed and will pull the configured OCR and translation models when they are missing. The first launch still depends on the user having Ollama available and network access for any model downloads.
 
 Run `loctran doctor` to check everything at once:
 
@@ -133,7 +142,7 @@ loctran doctor
 ## Updating README screenshots
 
 ```bash
-pip install -e ".[dev,server]"
+pip install -e ".[dev]"
 python -m playwright install chromium
 make screenshots
 ```
