@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyc
 *$py.class
 *.egg-info/
 *.egg
@@ -29,6 +30,7 @@ env/
 # Data Outputs and User Data (CRITICAL: Prevent data leaks)
 uploads/
 outputs/
+screen_grabs/
 images/
 converted_html/
 converted_images/
@@ -41,6 +43,12 @@ translation_report.html
 # (These are created in user's home directory and should never be committed)
 ~/Documents/Loctran_Translations/
 ~/Documents/Loctran_Conversions/
+
+# Local handoff and release helper artifacts
+HANDOFF_MODEL_STATE.md
+AGENTS.md
+version_bump.py
+setup.py
 
 
 # IDEs
