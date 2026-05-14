@@ -1,0 +1,6 @@
+exclude .cursorrules
+exclude SKILL.md
+exclude rules.md
+exclude .agent
+exclude .agent/*
+prune .agent

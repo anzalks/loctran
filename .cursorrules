@@ -51,6 +51,8 @@ tests/              # pytest (≥70 % coverage gate)
 - print() outside of tests or __main__ blocks — use rich.console or logging
 - Hardcoded paths like /home/user or C:\Users — always use pathlib.Path.home()
 - String formatting with % — use f-strings
+- Never create random Markdown files (like SKILL.md or rules.md) in the root directory. Maintain strict open-source repository hygiene. Do not commit internal AI thought processes to the codebase.
+- Never create random Markdown files (like SKILL.md or rules.md) in the root directory. Maintain strict open-source repository hygiene. Do not commit internal AI thought processes to the codebase.
 
 ## Git
 - Commit style: conventional commits (feat:, fix:, docs:, chore:, test:, refactor:)

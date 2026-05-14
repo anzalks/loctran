@@ -66,7 +66,9 @@ class TestModelPolicy:
 
         with (
             patch("loctran.model_policy.estimate_system_ram_gb", return_value=16.0),
-            patch("loctran.model_policy.list_local_models", return_value=["qwen2.5:7b"]),
+            patch(
+                "loctran.model_policy.list_local_models", return_value=["qwen2.5:7b"]
+            ),
             patch("loctran.model_policy.pull_model", return_value=True) as mock_pull,
         ):
             state = ensure_startup_model(
@@ -80,6 +82,7 @@ class TestModelPolicy:
 
     def test_startup_info_endpoint_returns_recommendation(self):
         from fastapi.testclient import TestClient
+
         from loctran.server.server import app
 
         with (

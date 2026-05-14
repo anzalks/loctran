@@ -7,6 +7,9 @@ import re
 import sys
 import time
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Union
+
+from loctran.exceptions import DependencyError, TranslationError
 
 DEBUG_MODE = os.getenv("LOCTRAN_DEBUG")
 logger = logging.getLogger("loctran.translate")
@@ -15,36 +18,58 @@ DEFAULT_LANG = "English"
 BATCH_SIZE = 5
 
 
-def _get_ollama():
+def _get_ollama() -> Any:
     try:
         import ollama  # type: ignore
     except ImportError as exc:
-        raise RuntimeError(
+        raise DependencyError(
             "Missing optional dependency 'ollama'. Install with: pip install loctran[server]"
         ) from exc
     return ollama
 
 
-# --- Helper Functions (Connection, etc) ---
-def check_ollama_connection(model_name, retries=3):
+def check_ollama_connection(model_name: str, retries: int = 3) -> bool:
+    """Checks if the local Ollama server is reachable.
+
+    Args:
+        model_name: The name of the model to check.
+        retries: Unused parameter for now.
+
+    Returns:
+        True if connected, False otherwise.
+    """
     try:
         _get_ollama().list()
         return True
     except Exception as e:
-        logger.error(f"Ollama connection check failed: {e}")
+        logger.error("Ollama connection check failed: %s", e)
         return False
 
 
-def list_models():
-    """Returns a list of available Ollama models."""
+def list_models() -> List[str]:
+    """Returns a list of available Ollama models.
+
+    Returns:
+        List of model names as strings.
+    """
     try:
         return [m["model"] for m in _get_ollama().list()["models"]]
     except Exception:
         return [DEFAULT_MODEL]
 
 
-def _extract_json_array(content):
-    """Try multiple strategies to extract a JSON array from an LLM response."""
+def _extract_json_array(content: str) -> List[Dict[str, Any]]:
+    """Try multiple strategies to extract a JSON array from an LLM response.
+
+    Args:
+        content: The raw string response from the LLM.
+
+    Returns:
+        A parsed list of dictionaries representing the translation payload.
+
+    Raises:
+        TranslationError: If all strategies fail to parse a JSON array.
+    """
     # Strategy 1: ```json ... ``` fence
     m = re.search(r"```json\s*([\s\S]*?)\s*```", content)
     if m:
@@ -85,13 +110,25 @@ def _extract_json_array(content):
             return result
     except (ValueError, SyntaxError):
         pass
-    raise ValueError(f"Could not parse LLM response as JSON array: {content[:200]!r}")
+    raise TranslationError(
+        f"Could not parse LLM response as JSON array: {content[:200]!r}"
+    )
 
 
-def _translate_chunk(chunk, model, target_lang):
-    """
-    Translates a small list of {id, text} dicts.
-    Returns {id: translation}. Tries batch JSON first, then sequential per-item.
+def _translate_chunk(
+    chunk: List[Dict[str, Any]], model: str, target_lang: str
+) -> Dict[int, str]:
+    """Translates a small list of text segments.
+
+    Tries batch JSON first, then sequential per-item as a fallback.
+
+    Args:
+        chunk: List of segment dictionaries with 'id' and 'text'.
+        model: Ollama model name.
+        target_lang: Language to translate into.
+
+    Returns:
+        A mapping of segment IDs to their translated text strings.
     """
     prompt = (
         f"Translate the following text segments to {target_lang}.\n"
@@ -184,11 +221,22 @@ def _translate_chunk(chunk, model, target_lang):
     return results
 
 
-def translate_segments(segments, model, target_lang, batch_size: int = BATCH_SIZE):
-    """
-    Translates a list of segments, chunked by *batch_size* to avoid context overflow.
-    Input: list of segment dicts with a 'text' key.
-    Returns: dict mapping index -> translated_text
+def translate_segments(
+    segments: List[Dict[str, Any]],
+    model: str,
+    target_lang: str,
+    batch_size: int = BATCH_SIZE,
+) -> Dict[int, str]:
+    """Translates a list of segments, chunked by batch_size to avoid context overflow.
+
+    Args:
+        segments: List of segment dictionaries. Must contain a 'text' key.
+        model: The Ollama model name to use.
+        target_lang: The target language.
+        batch_size: Max number of segments per LLM call.
+
+    Returns:
+        A dictionary mapping the original list index to the translated text.
     """
     if not segments:
         return {}
@@ -271,8 +319,20 @@ def translate_segments(segments, model, target_lang, batch_size: int = BATCH_SIZ
     return results
 
 
-def get_overlay_html(width, height, image_url, segments):
-    """Build an HTML overlay that places translated text boxes over the page image."""
+def get_overlay_html(
+    width: float, height: float, image_url: str, segments: List[Dict[str, Any]]
+) -> str:
+    """Build an HTML overlay that places translated text boxes over the page image.
+
+    Args:
+        width: Image width.
+        height: Image height.
+        image_url: Relative URL/path to the image.
+        segments: List of segment dictionaries containing 'bbox' and 'translation'.
+
+    Returns:
+        Generated HTML snippet.
+    """
     aspect_ratio = width / height if height > 0 else 1
 
     html = f"""
@@ -337,8 +397,24 @@ def get_overlay_html(width, height, image_url, segments):
 
 
 def process_folder(
-    folder_path, lang, model, progress_callback=None, batch_size: int = BATCH_SIZE
-):
+    folder_path: Union[str, Path],
+    lang: str,
+    model: str,
+    progress_callback: Optional[Callable[[str, int], None]] = None,
+    batch_size: int = BATCH_SIZE,
+) -> None:
+    """Processes a folder containing extraction data, translates it, and builds an HTML report.
+
+    Args:
+        folder_path: The workspace directory containing input_data.json and images.
+        lang: Target language for translation.
+        model: Ollama translation model to use.
+        progress_callback: Optional callback to track translation progress.
+        batch_size: Maximum segments per LLM batch.
+
+    Raises:
+        TranslationError: If Ollama connection fails or JSON is missing.
+    """
     folder_path = Path(folder_path)
     json_path = folder_path / "input_data.json"
     html_path = folder_path / f"{folder_path.name}.html"
@@ -356,7 +432,7 @@ def process_folder(
         logger.error(msg)
         if progress_callback:
             progress_callback(f"Error: {msg}", 0)
-        raise RuntimeError(msg)
+        raise TranslationError(msg)
 
     with open(json_path) as f:
         data = json.load(f)
@@ -463,9 +539,11 @@ def process_folder(
 
             original_text = "\n\n".join(s["text"] for s in segments_to_trans)
             translated_text = "\n\n".join(
-                s["translation"]
-                if s.get("translation")
-                else f"[untranslated: {s['text'][:40]}…]"
+                (
+                    s["translation"]
+                    if s.get("translation")
+                    else f"[untranslated: {s['text'][:40]}…]"
+                )
                 for s in segments_to_trans
             )
             translated_cls = (
@@ -551,7 +629,8 @@ def process_folder(
         f.write("</body></html>")
 
 
-def main():
+def main() -> None:
+    """CLI entrypoint for standalone translate logic."""
     parser = argparse.ArgumentParser(description="LLM Translator")
     parser.add_argument(
         "input_path", help="Path to 'outputs' folder or specific document folder"

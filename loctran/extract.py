@@ -5,24 +5,31 @@ import multiprocessing
 import os
 import re
 import shutil
+import tempfile
+import traceback
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from tqdm import tqdm
 
+from loctran.exceptions import DependencyError, ExtractionError
+
 try:
-    from langdetect import LangDetectException, detect_langs
+    from langdetect import LangDetectException, detect_langs  # type: ignore
 except ImportError:
 
     class LangDetectError(Exception):
         pass
 
-    LangDetectException = LangDetectError
+    LangDetectException = LangDetectError  # type: ignore
 
-    def detect_langs(_text):
+    def detect_langs(_text: str) -> List[Any]:
         raise LangDetectException(
             "langdetect is not installed. Install with: pip install loctran"
         )
 
+
+logger = logging.getLogger("loctran.extract")
 
 # Suppress pdfplumber warnings
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
@@ -34,8 +41,8 @@ POSSIBLE_TESSERACT_PATHS = [
 ]
 
 
-def _missing_dependency_error(module_name, extra_name):
-    return RuntimeError(
+def _missing_dependency_error(module_name: str, extra_name: str) -> DependencyError:
+    return DependencyError(
         f"Missing optional dependency '{module_name}'. Install with: pip install loctran[{extra_name}]"
     )
 
@@ -80,70 +87,95 @@ def _get_cv2():
     return cv2
 
 
-def _get_pillow_image():
+def _get_pillow_image() -> Any:
     try:
         from PIL import Image  # type: ignore
     except ImportError as exc:
-        raise RuntimeError(
+        raise DependencyError(
             "Missing optional dependency 'Pillow'. Install with: pip install loctran"
         ) from exc
     return Image
 
 
-def _configure_tesseract_path():
+def _configure_tesseract_path() -> Any:
     pytesseract = _get_pytesseract()
-    for path in POSSIBLE_TESSERACT_PATHS:
-        if os.path.exists(path):
-            pytesseract.pytesseract.tesseract_cmd = path
-            break
+
+    tess_path = shutil.which("tesseract")
+    if tess_path:
+        pytesseract.pytesseract.tesseract_cmd = tess_path
+    else:
+        for path in POSSIBLE_TESSERACT_PATHS:
+            if os.path.exists(path):
+                pytesseract.pytesseract.tesseract_cmd = path
+                break
     return pytesseract
 
 
-def check_dependencies():
-    """Verifies that external tools are installed."""
+def check_dependencies() -> bool:
+    """Verifies that external tools like Tesseract are installed.
+
+    Returns:
+        bool: True if all dependencies are satisfied, False otherwise.
+    """
     missing = []
     pytesseract = _configure_tesseract_path()
-    # Removed poppler check as we use pypdfium2 now
     if not shutil.which("tesseract") and not os.path.exists(
         pytesseract.pytesseract.tesseract_cmd
     ):
         missing.append("tesseract (brew install tesseract tesseract-lang)")
 
     if missing:
-        print("[ERROR] CRITICAL: Missing system dependencies:")
+        logger.error("CRITICAL: Missing system dependencies:")
         for tool in missing:
-            print(f"   - {tool}")
+            logger.error("   - %s", tool)
         return False
     return True
 
 
-def rasterize_pdf(pdf_path, output_dir):
+def rasterize_pdf(pdf_path: Union[str, Path], output_dir: Path) -> List[str]:
+    """Convert PDF pages to images using pypdfium2.
+
+    Args:
+        pdf_path: Path to the input PDF file.
+        output_dir: Directory where the output images should be saved.
+
+    Returns:
+        A list of absolute paths to the generated JPEG images.
+
+    Raises:
+        ExtractionError: If PDF rasterization fails.
     """
-    Convert PDF pages to images using pypdfium2.
-    Returns a list of image paths.
-    """
-    pdfium = _get_pdfium()
-    pdf = pdfium.PdfDocument(str(pdf_path))
-    n_pages = len(pdf)
-    image_paths = []
+    try:
+        pdfium = _get_pdfium()
+        pdf = pdfium.PdfDocument(str(pdf_path))
+        n_pages = len(pdf)
+        image_paths: List[str] = []
 
-    scale = 2  # 2x scaling for better OCR quality (approx 144 DPI if base is 72)
+        scale = 2  # 2x scaling for better OCR quality (approx 144 DPI if base is 72)
 
-    for i in range(n_pages):
-        page = pdf[i]
-        bitmap = page.render(scale=scale)
-        pil_image = bitmap.to_pil()
+        for i in range(n_pages):
+            page = pdf[i]
+            bitmap = page.render(scale=scale)
+            pil_image = bitmap.to_pil()
 
-        image_path = output_dir / f"slide_{i + 1}.jpg"
-        pil_image.save(image_path, format="JPEG", quality=90)
-        image_paths.append(str(image_path))
+            image_path = output_dir / f"slide_{i + 1}.jpg"
+            pil_image.save(image_path, format="JPEG", quality=90)
+            image_paths.append(str(image_path))
 
-    return image_paths
+        return image_paths
+    except Exception as e:
+        raise ExtractionError(f"Failed to rasterize PDF: {e}") from e
 
 
-def ocr_with_ollama(image_path, model="glm-ocr"):
-    """
-    Uses Ollama Vision model to extract text from a cropped image region.
+def ocr_with_ollama(image_path: str, model: str = "glm-ocr") -> Optional[str]:
+    """Uses Ollama Vision model to extract text from a cropped image region.
+
+    Args:
+        image_path: Absolute path to the image to run OCR on.
+        model: The vision model to use for extraction.
+
+    Returns:
+        The extracted text, or None if extraction fails or yields noise.
     """
     try:
         ollama = _get_ollama()
@@ -174,13 +206,19 @@ def ocr_with_ollama(image_path, model="glm-ocr"):
             return content
         return None
     except Exception as e:
-        if os.getenv("LOCTRAN_DEBUG"):
-            print(f"[WARN] AI OCR Failed: {e}")
+        logger.debug("AI OCR Failed for %s: %s", image_path, e)
         return None
 
 
-def _clean_ocr_response(text):
-    """Strip instruction bleed-through and markdown artifacts from OCR output."""
+def _clean_ocr_response(text: str) -> str:
+    """Strip instruction bleed-through and markdown artifacts from OCR output.
+
+    Args:
+        text: Raw OCR output from the vision LLM.
+
+    Returns:
+        Cleaned text string.
+    """
     lines = text.split("\n")
     cleaned = []
     skip_phrases = [
@@ -205,31 +243,25 @@ def _clean_ocr_response(text):
     return result
 
 
-def get_segments_digital(pdf_path, page_index):
+def get_segments_digital(
+    pdf_path: Union[str, Path], page_index: int
+) -> List[Dict[str, Any]]:
+    """Extracts text segments using pdfplumber for digital PDFs.
+
+    Args:
+        pdf_path: Path to the digital PDF.
+        page_index: The 0-based page index to extract.
+
+    Returns:
+        List of dictionaries containing text, bounding box, and extraction method.
     """
-    Extracts text segments using pdfplumber (Digital PDF).
-    Returns list of {text, bbox: [x, y, w, h], method: 'Digital'}
-    """
-    segments = []
+    segments: List[Dict[str, Any]] = []
     try:
         pdfplumber = _get_pdfplumber()
         with pdfplumber.open(pdf_path) as pdf:
             page = pdf.pages[page_index]
             words = page.extract_words()
 
-            # Simple grouping or use raw words?
-            # For overlay, words/lines are good. Let's use words for max precision or simple grouping?
-            # Let's try to simulate blocks by grouping close words.
-            # pdfplumber doesn't give blocks easily, but we can treat each word as a segment or rely on its internal clustering if we used `extract_text(layout=True)` but that returns string.
-
-            # Use 'extract_words' and group them into lines roughly?
-            # For now, let's just return lines if possible.
-            # Actually, let's keep it simple: return words.
-            # Wait, too many segments might be slow for translation if we translate each word.
-            # We need to group them.
-
-            # Better approach: Use pdfplumber's `extract_text` but we lose coords for the *block*.
-            # Let's use words and bbox for now.
             for w in words:
                 segments.append(
                     {
@@ -243,24 +275,29 @@ def get_segments_digital(pdf_path, page_index):
                         "method": "Digital",
                     }
                 )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Failed to extract digital segments on page %d: %s", page_index, e)
     return segments
 
 
-def get_segments_hybrid(image_path, use_ai=False, vision_model="glm-ocr"):
+def get_segments_hybrid(
+    image_path: str, use_ai: bool = False, vision_model: str = "glm-ocr"
+) -> List[Dict[str, Any]]:
+    """Uses Tesseract to detect Layout/Segments and optionally Ollama for OCR correction.
+
+    Args:
+        image_path: Path to the image file.
+        use_ai: If True, crops segments and sends to the vision model.
+        vision_model: The AI vision model to use if use_ai is True.
+
+    Returns:
+        List of segment dictionaries containing text and bounding boxes.
     """
-    Uses Tesseract to detect Layout/Segments.
-    If use_ai=True, crops segments and sends to AI.
-    Else, uses Tesseract text.
-    Returns list of {text, bbox: [x, y, w, h], method}
-    """
-    segments = []
+    segments: List[Dict[str, Any]] = []
     pytesseract = _configure_tesseract_path()
     pil_image = _get_pillow_image()
 
-    # --- HELPER: Run Tesseract on an image object ---
-    def get_raw_data(img_obj):
+    def get_raw_data(img_obj: Any) -> Dict[str, Any]:
         return pytesseract.image_to_data(img_obj, output_type=pytesseract.Output.DICT)
 
     try:
@@ -446,19 +483,34 @@ def get_segments_hybrid(image_path, use_ai=False, vision_model="glm-ocr"):
                 )
 
     except Exception as e:
-        if os.getenv("LOCTRAN_DEBUG"):
-            print(f"[ERROR] Segment extraction failed: {e}")
-            import traceback
-
-            traceback.print_exc()
+        logger.error(
+            "Segment extraction failed for %s: %s\n%s",
+            image_path,
+            e,
+            traceback.format_exc(),
+        )
 
     return segments
 
 
 def process_individual_segment(
-    word_list, segments, image_path, use_ai, img_obj, vision_model="glm-ocr"
-):
-    """Helper to calculate bbox and text for a list of words, then append to segments."""
+    word_list: List[Dict[str, Any]],
+    segments: List[Dict[str, Any]],
+    image_path: str,
+    use_ai: bool,
+    img_obj: Any,
+    vision_model: str = "glm-ocr",
+) -> None:
+    """Calculates bbox and text for a list of words and appends to the segment list.
+
+    Args:
+        word_list: List of word dictionaries from Tesseract.
+        segments: Running list of segments to append to.
+        image_path: Path to the original image.
+        use_ai: Whether to use AI OCR for text extraction.
+        img_obj: Pillow Image object.
+        vision_model: The vision model to use.
+    """
     if not word_list:
         return
 
@@ -499,16 +551,13 @@ def process_individual_segment(
     # Only if box is reasonable size
     if use_ai and (bbox[2] > 20) and (bbox[3] > 10):
         try:
-            # Crop
             crop = img_obj.crop(
                 (bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3])
             )
-            import hashlib
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
+                temp_crop_path = tmp_file.name
 
-            h_str = hashlib.md5(f"{bbox}-{full_text}".encode()).hexdigest()
-            temp_crop_path = f"{image_path}.crop_{h_str}.jpg"
             crop.save(temp_crop_path)
-
             ai_text = ocr_with_ollama(temp_crop_path, model=vision_model)
             if ai_text:
                 full_text = ai_text
@@ -517,8 +566,7 @@ def process_individual_segment(
             if os.path.exists(temp_crop_path):
                 os.remove(temp_crop_path)
         except Exception as e:
-            if os.getenv("LOCTRAN_DEBUG"):
-                print(f"[WARN] AI Segment failed: {e}")
+            logger.debug("AI Segment failed: %s", e)
 
     word_heights = [w["height"] for w in word_list if w["height"] > 0]
     min_wh = min(word_heights) if word_heights else bbox[3]
@@ -528,41 +576,39 @@ def process_individual_segment(
     )
 
 
-def sanitize_segments(segments):
+def sanitize_segments(segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Applies outlier rejection to bounding boxes.
+
+    Args:
+        segments: List of segment dictionaries.
+
+    Returns:
+        The sanitized segments list.
     """
-    Applies outlier rejection to bounding boxes to prevent huge font sizes.
-    Re-calculates box height based on median word height in the line/segment.
-    """
-    sanitized = []
+    sanitized: List[Dict[str, Any]] = []
     for s in segments:
-        # If we have word_data (from Tesseract), we already did this?
-        # But for Digital (pdfplumber), we might have just merged words.
-        # We need to check if the height is reasonable.
-        # For digital, we don't have confidence scores attached easily here unless we passed them.
-        # But we can assume if H > 3 * len(text) or something? No.
-
-        # Heuristic: If box height is > 50px (arbitrary big) and text length is small?
-        # Or better: check aspect ratio vs text length?
-        # A line of text "Hello" (5 chars) should have W >> H.
-        # If H > W and len > 5, it's suspicious?
-        # No, "I" is narrow.
-
-        # New Logic:
-        # Just clamp max height? No, headlines exist.
-
-        # If we don't have sub-word metrics, we can't do the "median" trick easily
-        # unless `merge_words` preserved them.
-        # Let's Modify `merge_words` to apply the logic THERE.
-
         sanitized.append(s)
     return sanitized
 
 
-def process_page(args):
-    """Process one page image and return the extracted slide payload."""
+def process_page(args: Tuple[str, str, int, bool, bool, str]) -> Dict[str, Any]:
+    """Process one page image and return the extracted slide payload.
+
+    Args:
+        args: A tuple containing:
+            - pdf_path_str: Path to the original PDF.
+            - image_path: Path to the rasterized page image.
+            - i: Page index.
+            - use_ai_ocr: Whether to use AI for OCR.
+            - force_ocr: Whether to force OCR over digital extraction.
+            - vision_model: Name of the AI vision model to use.
+
+    Returns:
+        A dictionary containing the slide number, segments, full text, and image path.
+    """
     pdf_path_str, image_path, i, use_ai_ocr, force_ocr, vision_model = args
 
-    item = {
+    item: Dict[str, Any] = {
         "slide_num": i + 1,
         "segments": [],
         "full_text": "",  # Concatenation for fallback/search
@@ -574,15 +620,12 @@ def process_page(args):
         # 1. Digital Extraction (PDFPlumber) - Only if not forcing OCR and not forcing AI
         got_digital = False
         if not use_ai_ocr and not force_ocr:
-            # Check if page has text
             try:
                 pdfplumber = _get_pdfplumber()
                 with pdfplumber.open(pdf_path_str) as pdf:
                     page = pdf.pages[i]
                     text = page.extract_text()
                     if text and len(text.strip()) > 50:
-                        # It has digital text. Let's get segments.
-                        # We need to scale coords.
                         pdf_w = page.width
                         pdf_h = page.height
 
@@ -604,7 +647,6 @@ def process_page(args):
                         )
                         line_gap = med_h * 0.6
 
-                        # Group words into lines by vertical proximity
                         lines = []
                         current_line = []
                         last_top = -9999
@@ -619,7 +661,6 @@ def process_page(args):
                         if current_line:
                             lines.append(current_line)
 
-                        # Split each line at column gaps
                         for line in lines:
                             line.sort(key=lambda w: w["x0"])
                             if not line:
@@ -638,14 +679,14 @@ def process_page(args):
                             gap_threshold = med_char_w * 3.5
 
                             current_chunk = [line[0]]
-                            for i in range(1, len(line)):
-                                gap = line[i]["x0"] - line[i - 1]["x1"]
+                            for idx in range(1, len(line)):
+                                gap = line[idx]["x0"] - line[idx - 1]["x1"]
                                 if gap > gap_threshold:
                                     segments.append(
                                         merge_words(current_chunk, scale_x, scale_y)
                                     )
                                     current_chunk = []
-                                current_chunk.append(line[i])
+                                current_chunk.append(line[idx])
                             if current_chunk:
                                 segments.append(
                                     merge_words(current_chunk, scale_x, scale_y)
@@ -655,11 +696,9 @@ def process_page(args):
                         item["full_text"] = text
                         got_digital = True
             except Exception as e:
-                if os.getenv("LOCTRAN_DEBUG"):
-                    print(f"[WARN] Digital extraction failed: {e}")
+                logger.debug("Digital extraction failed on page %d: %s", i, e)
 
         if not got_digital:
-            # 2. Hybrid OCR
             segments = get_segments_hybrid(
                 image_path, use_ai=use_ai_ocr, vision_model=vision_model
             )
@@ -672,8 +711,19 @@ def process_page(args):
     return item
 
 
-def merge_words(word_list, sx, sy):
-    """Merges a list of pdfplumber words into a segment with outlier rejection."""
+def merge_words(
+    word_list: List[Dict[str, Any]], sx: float, sy: float
+) -> Dict[str, Any]:
+    """Merges a list of pdfplumber words into a segment with outlier rejection.
+
+    Args:
+        word_list: List of word dictionaries from pdfplumber.
+        sx: X-axis scaling factor.
+        sy: Y-axis scaling factor.
+
+    Returns:
+        A segment dictionary containing the text and scaled bounding box.
+    """
     tops = sorted([w["top"] for w in word_list])
     heights = sorted([w["height"] for w in word_list])
 
@@ -707,10 +757,18 @@ def merge_words(word_list, sx, sy):
     }
 
 
-def _process_text_file(txt_path, doc_dir, progress_callback=None):
-    """
-    Extract paragraphs from a .txt file into input_data.json.
-    Each paragraph becomes one 'slide' with a single text segment and no image.
+def _process_text_file(
+    txt_path: Path, doc_dir: Path, progress_callback: Optional[Any] = None
+) -> Optional[Path]:
+    """Extract paragraphs from a .txt file into input_data.json.
+
+    Args:
+        txt_path: Path to the input .txt file.
+        doc_dir: Target directory for the extracted output.
+        progress_callback: Optional callback for progress reporting.
+
+    Returns:
+        The doc_dir Path on success, or None on failure.
     """
     if progress_callback:
         progress_callback(f"Reading text file {txt_path.name}...", 10)
@@ -723,11 +781,10 @@ def _process_text_file(txt_path, doc_dir, progress_callback=None):
             progress_callback(f"Failed to read file: {e}", 0)
         return None
 
-    # Split on blank lines to get paragraphs; fall back to line chunks of 10
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", content) if p.strip()]
     if not paragraphs:
         paragraphs = [line.strip() for line in content.splitlines() if line.strip()]
-    # Chunk long files into groups of 10 lines if no blank-line structure found
+
     if len(paragraphs) == 1 and "\n" in paragraphs[0]:
         lines = [line.strip() for line in paragraphs[0].splitlines() if line.strip()]
         paragraphs = [" ".join(lines[i : i + 10]) for i in range(0, len(lines), 10)]
@@ -737,7 +794,6 @@ def _process_text_file(txt_path, doc_dir, progress_callback=None):
             progress_callback("No text content found.", 0)
         return None
 
-    # Detect language from first ~1000 chars
     detected_lang = "unknown"
     try:
         sample = " ".join(paragraphs[:5])[:1000]
@@ -752,7 +808,7 @@ def _process_text_file(txt_path, doc_dir, progress_callback=None):
                 "slide_num": i + 1,
                 "segments": [{"text": para, "bbox": None, "method": "Text"}],
                 "full_text": para,
-                "image_path": None,  # No image for text files
+                "image_path": None,
                 "lang": detected_lang,
             }
         )
@@ -767,15 +823,28 @@ def _process_text_file(txt_path, doc_dir, progress_callback=None):
 
 
 def process_file(
-    pdf_path,
-    output_dir,
-    progress_callback=None,
-    folder_name=None,
-    use_ai_ocr=False,
-    force_ocr=False,
-    vision_model="glm-ocr",
-):
-    """Extract a PDF, image, or text file into a translation workspace directory."""
+    pdf_path: Path,
+    output_dir: Path,
+    progress_callback: Optional[Any] = None,
+    folder_name: Optional[str] = None,
+    use_ai_ocr: bool = False,
+    force_ocr: bool = False,
+    vision_model: str = "glm-ocr",
+) -> Optional[Path]:
+    """Extract a PDF, image, or text file into a translation workspace directory.
+
+    Args:
+        pdf_path: Path to the input file.
+        output_dir: Output directory where the data will be placed.
+        progress_callback: Callback function to report extraction progress.
+        folder_name: Override for the output folder name.
+        use_ai_ocr: Whether to use AI for OCR.
+        force_ocr: Whether to force OCR for digital PDFs.
+        vision_model: The AI vision model to use.
+
+    Returns:
+        The output directory path if successful, None otherwise.
+    """
     if folder_name:
         file_stem = folder_name
     else:
@@ -785,26 +854,24 @@ def process_file(
     if progress_callback:
         progress_callback(f"Starting extraction for {pdf_path.name}...", 0)
     else:
-        print(f"\n[INFO] Extracting: {pdf_path.name}")
+        logger.info("Extracting: %s", pdf_path.name)
 
     doc_dir = output_dir / safe_stem
     img_dir = doc_dir / "images"
     doc_dir.mkdir(parents=True, exist_ok=True)
     img_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- Text file: separate fast path, no images ---
     if pdf_path.suffix.lower() == ".txt":
         return _process_text_file(pdf_path, doc_dir, progress_callback)
 
-    # 1. Rasterize (pypdfium2) or Copy Image
-    image_paths = []
+    image_paths: List[str] = []
 
     if pdf_path.suffix.lower() in [".jpg", ".jpeg", ".png"]:
         msg = "   -> Processing Single Image..."
         if progress_callback:
             progress_callback(msg, 10)
         else:
-            print(msg)
+            logger.info(msg)
 
         target_path = img_dir / f"slide_1{pdf_path.suffix.lower()}"
         shutil.copy(pdf_path, target_path)
@@ -815,7 +882,7 @@ def process_file(
         if progress_callback:
             progress_callback(msg, 10)
         else:
-            print(msg)
+            logger.info(msg)
 
         try:
             image_paths = rasterize_pdf(pdf_path, img_dir)
@@ -824,11 +891,10 @@ def process_file(
             if progress_callback:
                 progress_callback(err, 0)
             else:
-                print(err)
-            return
+                logger.error(err)
+            return None
 
-    # 2. Parallel Extraction
-    cpu_count = min(os.cpu_count() or 4, 8)  # Cap at 8
+    cpu_count = min(os.cpu_count() or 4, 8)
     msg = f"   -> Processing {len(image_paths)} slides..."
     if progress_callback:
         progress_callback(msg, 20)
@@ -877,7 +943,7 @@ def process_file(
     return doc_dir
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="PDF Extractor (Commercial Safe)")
     parser.add_argument("input_path", help="Path to PDF or folder")
     parser.add_argument("--output", help="Output directory")
@@ -917,7 +983,7 @@ def main():
             files.extend(list(input_path.glob(f"*{ext}")))
 
     if not files:
-        print(f"No supported files (PDF/Images/Text) found in {input_path}.")
+        logger.warning("No supported files (PDF/Images/Text) found in %s.", input_path)
         return
 
     for f in files:

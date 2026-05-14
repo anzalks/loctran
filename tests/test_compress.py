@@ -8,16 +8,15 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _minimal_pdf(path: Path) -> Path:
     """Write a PDF-like file large enough to exceed typical target sizes."""
@@ -29,21 +28,27 @@ def _minimal_pdf(path: Path) -> Path:
 # Tests: parse_size
 # ---------------------------------------------------------------------------
 
+
 class TestParseSize:
-    @pytest.mark.parametrize("text,expected", [
-        ("1KB", 1024),
-        ("1 KB", 1024),
-        ("1.5 MB", int(1.5 * 1024 ** 2)),
-        ("2GB", 2 * 1024 ** 3),
-        ("512", 512),
-        ("512B", 512),
-    ])
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ("1KB", 1024),
+            ("1 KB", 1024),
+            ("1.5 MB", int(1.5 * 1024**2)),
+            ("2GB", 2 * 1024**3),
+            ("512", 512),
+            ("512B", 512),
+        ],
+    )
     def test_parses_correctly(self, text, expected):
         from loctran.server.compress import parse_size
+
         assert parse_size(text) == expected
 
     def test_invalid_raises(self):
         from loctran.server.compress import parse_size
+
         with pytest.raises(ValueError):
             parse_size("not_a_size")
 
@@ -51,6 +56,7 @@ class TestParseSize:
 # ---------------------------------------------------------------------------
 # Tests: compress_pdf_safe
 # ---------------------------------------------------------------------------
+
 
 class TestCompressPdfSafe:
     def test_skips_if_already_small(self, tmp_path):
@@ -60,6 +66,7 @@ class TestCompressPdfSafe:
         dst = tmp_path / "out.pdf"
 
         from loctran.server.compress import compress_pdf_safe
+
         result = compress_pdf_safe(str(src), str(dst), target_size=1024 * 1024)
 
         assert result["original_size"] == result["compressed_size"]
@@ -72,8 +79,8 @@ class TestCompressPdfSafe:
         original_size = src.stat().st_size
 
         # Stub pdfium to return a tiny image
+
         from PIL import Image as PILImage
-        import io
 
         tiny = PILImage.new("RGB", (4, 4), color=(255, 255, 255))
 
@@ -89,6 +96,7 @@ class TestCompressPdfSafe:
 
         with patch("loctran.server.compress.pdfium.PdfDocument", return_value=fake_doc):
             from loctran.server.compress import compress_pdf_safe
+
             result = compress_pdf_safe(str(src), str(dst), target_size=50)
 
         assert result["compressed_size"] <= original_size
@@ -99,24 +107,29 @@ class TestCompressPdfSafe:
 # Tests: format_size
 # ---------------------------------------------------------------------------
 
+
 class TestFormatSize:
     def test_bytes(self):
         from loctran.server.compress import format_size
+
         assert "B" in format_size(512)
 
     def test_kilobytes(self):
         from loctran.server.compress import format_size
+
         result = format_size(2048)
         assert "KB" in result
 
     def test_megabytes(self):
         from loctran.server.compress import format_size
+
         result = format_size(2 * 1024 * 1024)
         assert "MB" in result
 
     def test_gigabytes(self):
         from loctran.server.compress import format_size
-        result = format_size(2 * 1024 ** 3)
+
+        result = format_size(2 * 1024**3)
         assert "GB" in result
 
 
@@ -124,15 +137,18 @@ class TestFormatSize:
 # Tests: compress_image_to_size
 # ---------------------------------------------------------------------------
 
+
 class TestCompressImageToSize:
     def test_compresses_image(self, tmp_path):
         from PIL import Image as PILImage
+
         src = tmp_path / "img.jpg"
         img = PILImage.new("RGB", (100, 100), color=(128, 64, 32))
         img.save(str(src), "JPEG")
         dst = tmp_path / "out.jpg"
 
         from loctran.server.compress import compress_image_to_size
+
         result = compress_image_to_size(str(src), str(dst), target_size=1024 * 1024)
         assert dst.exists()
         assert "original_size" in result
@@ -140,12 +156,14 @@ class TestCompressImageToSize:
 
     def test_rgba_converted_to_rgb(self, tmp_path):
         from PIL import Image as PILImage
+
         src = tmp_path / "img.png"
         img = PILImage.new("RGBA", (50, 50), color=(128, 64, 32, 200))
         img.save(str(src), "PNG")
         dst = tmp_path / "out.jpg"
 
         from loctran.server.compress import compress_image_to_size
+
         result = compress_image_to_size(str(src), str(dst), target_size=1024 * 1024)
         assert dst.exists()
 
@@ -154,6 +172,7 @@ class TestCompressImageToSize:
 # Tests: compress_file dispatch
 # ---------------------------------------------------------------------------
 
+
 class TestCompressFile:
     def test_dispatches_pdf_to_pdf(self, tmp_path):
         src = tmp_path / "in.pdf"
@@ -161,23 +180,27 @@ class TestCompressFile:
         dst = tmp_path / "out.pdf"
 
         from loctran.server.compress import compress_file
-        result = compress_file(str(src), str(dst), target_size=1024 * 1024)
+
+        compress_file(str(src), str(dst), target_size=1024 * 1024)
         # Already small — should copy unchanged
         assert result["original_size"] == result["compressed_size"]
 
     def test_dispatches_image_to_image(self, tmp_path):
         from PIL import Image as PILImage
+
         src = tmp_path / "photo.jpg"
         PILImage.new("RGB", (60, 60), color=(0, 128, 255)).save(str(src), "JPEG")
         dst = tmp_path / "out.jpg"
         from loctran.server.compress import compress_file
-        result = compress_file(str(src), str(dst), target_size=1024 * 1024)
+
+        compress_file(str(src), str(dst), target_size=1024 * 1024)
         assert dst.exists()
         assert "original_size" in result
 
     def test_dispatches_pdf_to_image(self, tmp_path):
         """A pdf->jpg dispatch should call compress_image_to_size."""
         from PIL import Image as PILImage
+
         src = tmp_path / "in.pdf"
         src.write_bytes(b"%PDF-1.4\n" + b"x" * 100)
         dst = tmp_path / "out.jpg"
@@ -192,24 +215,28 @@ class TestCompressFile:
 
         with patch("loctran.server.compress.pdfium.PdfDocument", return_value=fake_doc):
             from loctran.server.compress import compress_file
-            result = compress_file(str(src), str(dst), target_size=1024 * 1024)
+
+            compress_file(str(src), str(dst), target_size=1024 * 1024)
         assert dst.exists()
 
 
 class TestFormatSizeTB:
     def test_terabytes(self):
         from loctran.server.compress import format_size
-        result = format_size(2 * 1024 ** 4)
+
+        result = format_size(2 * 1024**4)
         assert "TB" in result
 
 
 class TestParseSizeB:
     def test_bare_B_suffix(self):
         from loctran.server.compress import parse_size
+
         assert parse_size("512B") == 512
 
     def test_invalid_B_value(self):
         from loctran.server.compress import parse_size
+
         with pytest.raises(ValueError):
             parse_size("xyzB")
 
@@ -222,6 +249,7 @@ class TestCompressPdfSafeTargetHit:
         dst = tmp_path / "out.pdf"
 
         from PIL import Image as PILImage
+
         tiny = PILImage.new("RGB", (4, 4), color=(200, 200, 200))
         fake_page = MagicMock()
         fake_bitmap = MagicMock()
@@ -234,6 +262,9 @@ class TestCompressPdfSafeTargetHit:
         # Use a very large target so the first attempt fits
         with patch("loctran.server.compress.pdfium.PdfDocument", return_value=fake_doc):
             from loctran.server.compress import compress_pdf_safe
-            result = compress_pdf_safe(str(src), str(dst), target_size=100 * 1024 * 1024)
+
+            result = compress_pdf_safe(
+                str(src), str(dst), target_size=100 * 1024 * 1024
+            )
         assert dst.exists()
         assert "compressed_size" in result

@@ -1,3 +1,4 @@
+
 # Copyright 2026 Anzal KS
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,14 +21,16 @@ fully offline and deterministic.
 
 from __future__ import annotations
 
+from pathlib import Path
 import json
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 # ---------------------------------------------------------------------------
 # Fake LLM response builders
 # ---------------------------------------------------------------------------
+
 
 def _ollama_response(translations: list[dict]) -> dict:
     """Build a minimal ollama.chat() return value containing a JSON array."""
@@ -43,24 +46,31 @@ def _segment(text: str) -> dict:
 # Tests: happy-path batch translation
 # ---------------------------------------------------------------------------
 
+
 class TestTranslateSegmentsHappy:
     def test_returns_dict_indexed_by_position(self):
         """Successful batch → result keys are 0-based indices."""
         segs = [_segment("Hello"), _segment("World")]
-        llm_reply = _ollama_response([
-            {"id": 0, "translation": "Bonjour"},
-            {"id": 1, "translation": "Monde"},
-        ])
+        llm_reply = _ollama_response(
+            [
+                {"id": 0, "translation": "Bonjour"},
+                {"id": 1, "translation": "Monde"},
+            ]
+        )
 
         with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(chat=MagicMock(return_value=llm_reply))
+            mock_get_ollama.return_value = MagicMock(
+                chat=MagicMock(return_value=llm_reply)
+            )
             from loctran.translate import translate_segments
+
             result = translate_segments(segs, model="test-model", target_lang="French")
 
         assert result == {0: "Bonjour", 1: "Monde"}
 
     def test_empty_segments_returns_empty_dict(self):
         from loctran.translate import translate_segments
+
         assert translate_segments([], model="test-model", target_lang="French") == {}
 
     def test_whitespace_only_segments_skipped(self):
@@ -68,8 +78,11 @@ class TestTranslateSegmentsHappy:
         llm_reply = _ollama_response([{"id": 0, "translation": "Bonjour"}])
 
         with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(chat=MagicMock(return_value=llm_reply))
+            mock_get_ollama.return_value = MagicMock(
+                chat=MagicMock(return_value=llm_reply)
+            )
             from loctran.translate import translate_segments
+
             result = translate_segments(segs, model="test-model", target_lang="French")
 
         assert len(result) == 1
@@ -82,16 +95,19 @@ class TestTranslateSegmentsHappy:
         def _reply(model, messages, **kw):
             # Parse which segments were sent and echo back translations
             payload = json.loads(messages[0]["content"].split("Input:\n")[1])
-            return _ollama_response([
-                {"id": item["id"], "translation": f"trans_{item['id']}"}
-                for item in payload
-            ])
+            return _ollama_response(
+                [
+                    {"id": item["id"], "translation": f"trans_{item['id']}"}
+                    for item in payload
+                ]
+            )
 
         with patch("loctran.translate._get_ollama") as mock_get_ollama:
             mock_ollama = MagicMock()
             mock_ollama.chat = MagicMock(side_effect=_reply)
             mock_get_ollama.return_value = mock_ollama
             from loctran.translate import translate_segments
+
             result = translate_segments(segs, model="test-model", target_lang="French")
 
         assert mock_ollama.chat.call_count >= 2
@@ -101,6 +117,7 @@ class TestTranslateSegmentsHappy:
 # ---------------------------------------------------------------------------
 # Tests: fallback / partial-response behaviour
 # ---------------------------------------------------------------------------
+
 
 class TestTranslateSegmentsFallback:
     def test_partial_batch_filled_by_gap_fill(self):
@@ -123,10 +140,15 @@ class TestTranslateSegmentsFallback:
                 return {"message": {"content": "Gamma"}}
 
         with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(chat=MagicMock(side_effect=_selective_reply))
-            with patch("loctran.translate.time.sleep"):   # skip real sleeps
+            mock_get_ollama.return_value = MagicMock(
+                chat=MagicMock(side_effect=_selective_reply)
+            )
+            with patch("loctran.translate.time.sleep"):  # skip real sleeps
                 from loctran.translate import translate_segments
-                result = translate_segments(segs, model="test-model", target_lang="French")
+
+                result = translate_segments(
+                    segs, model="test-model", target_lang="French"
+                )
 
         # Must have results for all 3 segments
         assert len(result) == 3
@@ -136,10 +158,15 @@ class TestTranslateSegmentsFallback:
         segs = [_segment("Hello"), _segment("World")]
 
         with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(chat=MagicMock(side_effect=RuntimeError("network down")))
+            mock_get_ollama.return_value = MagicMock(
+                chat=MagicMock(side_effect=RuntimeError("network down"))
+            )
             with patch("loctran.translate.time.sleep"):
                 from loctran.translate import translate_segments
-                result = translate_segments(segs, model="test-model", target_lang="French")
+
+                result = translate_segments(
+                    segs, model="test-model", target_lang="French"
+                )
 
         assert isinstance(result, dict)
         # Either empty or partially filled — must never raise
@@ -149,19 +176,26 @@ class TestTranslateSegmentsFallback:
         """Non-JSON batch response must trigger per-segment sequential retries."""
         segs = [_segment("X"), _segment("Y")]
 
-        call_iter = iter([
-            # First call: batch → malformed
-            {"message": {"content": "Sorry, I cannot comply."}},
-            # Subsequent sequential calls: well-formed single translations
-            {"message": {"content": "EX"}},
-            {"message": {"content": "WHY"}},
-        ])
+        call_iter = iter(
+            [
+                # First call: batch → malformed
+                {"message": {"content": "Sorry, I cannot comply."}},
+                # Subsequent sequential calls: well-formed single translations
+                {"message": {"content": "EX"}},
+                {"message": {"content": "WHY"}},
+            ]
+        )
 
         with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(chat=MagicMock(side_effect=lambda **kw: next(call_iter)))
+            mock_get_ollama.return_value = MagicMock(
+                chat=MagicMock(side_effect=lambda **kw: next(call_iter))
+            )
             with patch("loctran.translate.time.sleep"):
                 from loctran.translate import translate_segments
-                result = translate_segments(segs, model="test-model", target_lang="French")
+
+                result = translate_segments(
+                    segs, model="test-model", target_lang="French"
+                )
 
         # Sequential fallback must yield something for both segments
         assert len(result) >= 1
@@ -171,6 +205,7 @@ class TestTranslateSegmentsFallback:
 # Tests: internal chunk helper (_translate_chunk)
 # ---------------------------------------------------------------------------
 
+
 class TestTranslateChunkInternal:
     def test_positional_mapping_used_when_ids_mismatched(self):
         """If LLM resets IDs to 0-based, positional mapping must still work."""
@@ -178,10 +213,12 @@ class TestTranslateChunkInternal:
 
         chunk = [{"id": 10, "text": "Foo"}, {"id": 11, "text": "Bar"}]
         # LLM resets ids to 0 and 1
-        reply = _ollama_response([
-            {"id": 0, "translation": "Baz"},
-            {"id": 1, "translation": "Qux"},
-        ])
+        reply = _ollama_response(
+            [
+                {"id": 0, "translation": "Baz"},
+                {"id": 1, "translation": "Qux"},
+            ]
+        )
 
         with patch("loctran.translate._get_ollama") as mock_get_ollama:
             mock_get_ollama.return_value = MagicMock(chat=MagicMock(return_value=reply))
@@ -192,6 +229,7 @@ class TestTranslateChunkInternal:
 
     def test_empty_chunk_returns_empty(self):
         from loctran.translate import _translate_chunk
+
         with patch("loctran.translate._get_ollama") as mock_get_ollama:
             mock_get_ollama.return_value = MagicMock(chat=MagicMock())
             result = _translate_chunk([], model="test-model", target_lang="French")
@@ -202,6 +240,7 @@ class TestTranslateChunkInternal:
 # ---------------------------------------------------------------------------
 # Section 4-B: additional tests
 # ---------------------------------------------------------------------------
+
 
 class TestTranslateSegmentsBatchFallback:
     def test_first_call_raises_then_sequential_succeeds(self):
@@ -223,34 +262,47 @@ class TestTranslateSegmentsBatchFallback:
             return {"message": {"content": "Monde"}}
 
         with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(chat=MagicMock(side_effect=_side_effect))
+            mock_get_ollama.return_value = MagicMock(
+                chat=MagicMock(side_effect=_side_effect)
+            )
             with patch("loctran.translate.time.sleep"):
                 from loctran.translate import translate_segments
-                result = translate_segments(segs, model="test-model", target_lang="French")
+
+                result = translate_segments(
+                    segs, model="test-model", target_lang="French"
+                )
 
         assert len(result) == 2
 
 
 class TestExtractJsonArrayStrategies:
-    @pytest.mark.parametrize("content,expected", [
-        # Strategy 1: ```json fence
-        ('```json\n[{"id":0,"translation":"Hi"}]\n```',
-         [{"id": 0, "translation": "Hi"}]),
-        # Strategy 2: generic ``` fence
-        ('```\n[{"id":0,"translation":"Hi"}]\n```',
-         [{"id": 0, "translation": "Hi"}]),
-        # Strategy 3: bare array in text
-        ('Some text [{"id":0,"translation":"Hi"}] more text',
-         [{"id": 0, "translation": "Hi"}]),
-        # Strategy 4: raw JSON
-        ('[{"id":0,"translation":"Hi"}]',
-         [{"id": 0, "translation": "Hi"}]),
-        # Strategy 5: Python literal with single quotes
-        ("[{'id': 0, 'translation': 'Hi'}]",
-         [{"id": 0, "translation": "Hi"}]),
-    ])
+    @pytest.mark.parametrize(
+        "content,expected",
+        [
+            # Strategy 1: ```json fence
+            (
+                '```json\n[{"id":0,"translation":"Hi"}]\n```',
+                [{"id": 0, "translation": "Hi"}],
+            ),
+            # Strategy 2: generic ``` fence
+            (
+                '```\n[{"id":0,"translation":"Hi"}]\n```',
+                [{"id": 0, "translation": "Hi"}],
+            ),
+            # Strategy 3: bare array in text
+            (
+                'Some text [{"id":0,"translation":"Hi"}] more text',
+                [{"id": 0, "translation": "Hi"}],
+            ),
+            # Strategy 4: raw JSON
+            ('[{"id":0,"translation":"Hi"}]', [{"id": 0, "translation": "Hi"}]),
+            # Strategy 5: Python literal with single quotes
+            ("[{'id': 0, 'translation': 'Hi'}]", [{"id": 0, "translation": "Hi"}]),
+        ],
+    )
     def test_strategy(self, content, expected):
         from loctran.translate import _extract_json_array
+
         result = _extract_json_array(content)
         assert result == expected
 
@@ -259,6 +311,7 @@ class TestTranslateEmptySegments:
     def test_empty_returns_empty_dict_no_ollama_call(self):
         with patch("loctran.translate._get_ollama") as mock_get_ollama:
             from loctran.translate import translate_segments
+
             result = translate_segments([], model="test-model", target_lang="French")
 
         mock_get_ollama.assert_not_called()
@@ -269,15 +322,18 @@ class TestTranslateEmptySegments:
 # Tests: get_overlay_html
 # ---------------------------------------------------------------------------
 
+
 class TestGetOverlayHtml:
     def test_returns_html_string(self):
         from loctran.translate import get_overlay_html
+
         html = get_overlay_html(800, 600, "images/page_1.png", [])
         assert "<img" in html
         assert "overlay-container" in html
 
     def test_segments_with_translation_appear(self):
         from loctran.translate import get_overlay_html
+
         seg = {
             "bbox": [10, 20, 100, 40],
             "text": "Hello",
@@ -289,6 +345,7 @@ class TestGetOverlayHtml:
 
     def test_segment_without_translation_skipped(self):
         from loctran.translate import get_overlay_html
+
         seg = {"bbox": [10, 20, 100, 40], "text": "Hello"}
         html = get_overlay_html(800, 600, "images/page_1.png", [seg])
         # No translated box should appear
@@ -296,11 +353,13 @@ class TestGetOverlayHtml:
 
     def test_zero_height_handled(self):
         from loctran.translate import get_overlay_html
+
         html = get_overlay_html(800, 0, "images/page_1.png", [])
         assert html  # should not crash
 
     def test_segment_with_min_word_height(self):
         from loctran.translate import get_overlay_html
+
         seg = {
             "bbox": [10, 20, 100, 40],
             "text": "Hello",
@@ -315,9 +374,11 @@ class TestGetOverlayHtml:
 # Tests: check_ollama_connection and list_models
 # ---------------------------------------------------------------------------
 
+
 class TestCheckOllamaConnection:
     def test_returns_true_when_list_succeeds(self):
         from loctran.translate import check_ollama_connection
+
         mock_ollama = MagicMock()
         mock_ollama.list.return_value = {"models": []}
         with patch("loctran.translate._get_ollama", return_value=mock_ollama):
@@ -326,6 +387,7 @@ class TestCheckOllamaConnection:
 
     def test_returns_false_when_list_fails(self):
         from loctran.translate import check_ollama_connection
+
         mock_ollama = MagicMock()
         mock_ollama.list.side_effect = ConnectionError("no ollama")
         with patch("loctran.translate._get_ollama", return_value=mock_ollama):
@@ -336,15 +398,19 @@ class TestCheckOllamaConnection:
 class TestListModels:
     def test_returns_model_names(self):
         from loctran.translate import list_models
+
         mock_ollama = MagicMock()
-        mock_ollama.list.return_value = {"models": [{"model": "qwen2.5:7b"}, {"model": "llama3:8b"}]}
+        mock_ollama.list.return_value = {
+            "models": [{"model": "qwen2.5:7b"}, {"model": "llama3:8b"}]
+        }
         with patch("loctran.translate._get_ollama", return_value=mock_ollama):
             result = list_models()
         assert "qwen2.5:7b" in result
         assert "llama3:8b" in result
 
     def test_returns_default_on_error(self):
-        from loctran.translate import list_models, DEFAULT_MODEL
+        from loctran.translate import DEFAULT_MODEL, list_models
+
         mock_ollama = MagicMock()
         mock_ollama.list.side_effect = RuntimeError("down")
         with patch("loctran.translate._get_ollama", return_value=mock_ollama):
@@ -356,29 +422,36 @@ class TestListModels:
 # Tests: process_folder
 # ---------------------------------------------------------------------------
 
+
 class TestProcessFolder:
     def _write_input_data(self, folder: "Path", slides: list) -> None:
         import json
+
         (folder / "input_data.json").write_text(json.dumps(slides))
 
     def test_aborts_when_no_json(self, tmp_path):
         """process_folder should return None when input_data.json is missing."""
         from loctran.translate import process_folder
+
         with patch("loctran.translate.check_ollama_connection", return_value=True):
             result = process_folder(tmp_path, "French", "qwen2.5:7b")
         assert result is None  # returns None after logging error
 
     def test_aborts_when_ollama_unreachable(self, tmp_path):
+        from loctran.exceptions import TranslationError
         from loctran.translate import process_folder
+
         self._write_input_data(tmp_path, [])
         with patch("loctran.translate.check_ollama_connection", return_value=False):
             import pytest as _pytest
-            with _pytest.raises(RuntimeError):
+
+            with _pytest.raises(TranslationError):
                 process_folder(tmp_path, "French", "qwen2.5:7b")
 
     def test_empty_slides_produces_html(self, tmp_path):
         """Empty slide list should produce an html file."""
         from loctran.translate import process_folder
+
         self._write_input_data(tmp_path, [])
         with patch("loctran.translate.check_ollama_connection", return_value=True):
             process_folder(tmp_path, "French", "qwen2.5:7b")
@@ -388,6 +461,7 @@ class TestProcessFolder:
     def test_text_only_slide_produces_html(self, tmp_path):
         """A text-only slide (no img_path) should be rendered into HTML."""
         from loctran.translate import process_folder
+
         slides = [
             {
                 "slide_num": 1,
@@ -408,4 +482,3 @@ class TestProcessFolder:
             process_folder(tmp_path, "French", "qwen2.5:7b")
         html = (tmp_path / f"{tmp_path.name}.html").read_text()
         assert "Hello world" in html
-
