@@ -111,6 +111,10 @@ def _os_install_hints() -> list[str]:
 
 def run_doctor() -> int:
     from loctran import __version__
+    from loctran.config import load_settings
+
+    settings = load_settings()
+    required_models = [settings.ocr_model, settings.translation_model]
 
     try:
         from rich import box
@@ -148,11 +152,11 @@ def run_doctor() -> int:
             table.add_row("[red]✗[/red]", "Ollama", ollama_ver)
             all_ok = False
 
-        for model in ("qwen2.5:7b", "qwen2.5:32b"):
+        for model in required_models:
             m_ok, m_info = _check_model(model)
             sym = "[green]✓[/green]" if m_ok else "[yellow]✗[/yellow]"
             table.add_row(sym, model, m_info)
-            if model == "qwen2.5:7b" and not m_ok:
+            if not m_ok:
                 all_ok = False
 
         console.print(table)
@@ -191,10 +195,10 @@ def run_doctor() -> int:
             all_ok = False
             print("       → Start with: ollama serve")
 
-        for model in ("qwen2.5:7b", "qwen2.5:32b"):
+        for model in required_models:
             m_ok, m_info = _check_model(model)
             print(f"[{'OK ' if m_ok else '   '}] {model:<16} {m_info}")
-            if model == "qwen2.5:7b" and not m_ok:
+            if not m_ok:
                 all_ok = False
 
         print("=" * 40)

@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/) and this 
 
 ## [Unreleased]
 
+### 2026-05-14
+- Migrated model stack to dual-model operation: OCR uses `glm-ocr`, translation uses `translategemma:4b`, with `translategemma:12b` documented as an optional quality tier.
+- Updated docs and diagnostics to require both OCR and translation models.
+
 ### Added
 - `scripts/capture_screenshots.py` for reproducible, headless UI screenshots.
 - `Makefile` target `screenshots` to regenerate README screenshots.
@@ -33,7 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/) and this 
 - `Dockerfile` for containerised deployment.
 
 ### Changed
-- `DEFAULT_MODEL` changed from `qwen2.5:32b` to `qwen2.5:7b` (runs on most hardware, ~4 GB).
+- Translation default model was reduced from a large high-memory profile to a smaller profile that runs on most hardware.
 - `_stop_ollama()` in `server.py` now tracks whether Ollama was pre-existing and never terminates a user's Ollama instance — uses `_ollama_proc` PID handle instead of `pkill -f`.
 - `_start_ollama_if_needed()` added to lifespan startup: starts Ollama if not already running.
 - Improved `diagnostics.py`: version detection, language count, model pull status, `rich` table output with plain-text fallback.

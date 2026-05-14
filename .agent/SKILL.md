@@ -83,8 +83,8 @@ scripts/                # Utility scripts
 ## 5. AI Integration (Ollama & OCR)
 
 ### Model Selection
-- **Translation**: `qwen2.5:14b` (High quality) or `llama3` variants.
-- **OCR**: `deepseek-ocr:3b` (Specialized for handwriting/layout).
+- **Translation**: `translategemma:4b` (default) or `translategemma:12b` (higher quality).
+- **OCR**: `glm-ocr`.
 - **Fallback**: Standard `Tesseract` (OCR) if AI fails.
 
 ### Best Practices

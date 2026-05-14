@@ -7,22 +7,6 @@
 
 **Translate PDFs locally. No cloud. No API key. Just Ollama.**
 
-<p align="center">
-  <img src="docs/screenshots/landing.png" width="800" alt="Loctran landing page">
-</p>
-
----
-
-## 30-second install
-
-```bash
-pip install "loctran[ocr,server]"
-ollama pull qwen2.5:7b          # one-time, ~4 GB
-loctran translate document.pdf --lang French
-```
-
----
-
 ## Features
 
 | What it does | Why it matters |
@@ -34,6 +18,39 @@ loctran translate document.pdf --lang French
 | Web UI with real-time progress | Upload and translate from any browser |
 | PDF compression | Reduce file size without proprietary tools |
 | **100 % local — files never leave your machine** | Full privacy, no API keys, works offline |
+
+---
+
+## Screenshots
+
+| 1. Home | 1.1 PDF Upload |
+|---|---|
+| ![1. Home](docs/screenshots/app_home.png) | ![1.1 PDF Upload](docs/screenshots/pdf_uploaded.png) |
+
+| 2. Translation Configured | 2.1 Translation In Progress |
+|---|---|
+| ![2. Translation Configured](docs/screenshots/translation_configured.png) | ![2.1 Translation In Progress](docs/screenshots/translation_in_progress.png) |
+
+| 3. Result | 3.1 Translation Complete |
+|---|---|
+| ![3. Result](docs/screenshots/04_result.png) | ![3.1 Translation Complete](docs/screenshots/translation_complete.png) |
+
+---
+
+## 30-second install
+
+```bash
+pip install "loctran[ocr,server]"
+ollama pull glm-ocr
+ollama pull translategemma:4b
+loctran
+# opens Web UI at http://127.0.0.1:8000
+```
+
+```bash
+# CLI translation example
+loctran translate document.pdf --lang French
+```
 
 ---
 
@@ -59,7 +76,7 @@ Each page becomes an image with absolutely-positioned translation boxes sized to
 - **Ollama** running locally — [download](https://ollama.com/download)
 - **Tesseract** — `brew install tesseract tesseract-lang` (macOS) or `apt install tesseract-ocr tesseract-ocr-all` (Linux)
 
-Run `loctran-doctor` to check everything at once:
+Run `loctran doctor` to check everything at once:
 
 ```
 loctran-doctor v0.1.1b1
@@ -67,8 +84,8 @@ loctran-doctor v0.1.1b1
 ✓  Python         3.11.9
 ✓  Tesseract      5.3.4  (langs: eng fra deu jpn +47)
 ✓  Ollama         0.3.1  (running)
-✓  qwen2.5:7b     pulled (4.1 GB)
-✗  qwen2.5:32b    NOT pulled  →  ollama pull qwen2.5:32b
+✓  glm-ocr        pulled (2.2 GB)
+✓  translategemma:4b pulled (3.3 GB)
 ─────────────────────────────────────
 All required dependencies satisfied.
 ```
@@ -83,10 +100,6 @@ Start the server and open your browser:
 loctran serve
 # → http://localhost:8000
 ```
-
-<p align="center">
-  <img src="docs/screenshots/translator.png" width="720" alt="Loctran translator UI">
-</p>
 
 Upload a PDF, choose a target language and model, then watch the real-time progress bar. The translated HTML opens automatically when done.
 
@@ -104,8 +117,8 @@ Commands:
 ```
 
 ```bash
-# Translate to Spanish using a larger model
-loctran translate report.pdf --lang Spanish --model qwen2.5:32b
+# Translate to Spanish using a higher-quality translation model
+loctran translate report.pdf --lang Spanish --model translategemma:12b
 
 # Extract text only, save to custom folder
 loctran translate scan.pdf --extract-only --output ~/Desktop/extracted
@@ -135,7 +148,7 @@ This writes screenshots to `docs/screenshots/` using `scripts/capture_screenshot
 No. Everything runs locally on your machine. Loctran talks only to Ollama at `localhost:11434`. No telemetry, no analytics, no cloud.
 
 **Which Ollama models work?**
-Any chat model. `qwen2.5:7b` (~4 GB) is the recommended default — good quality on most machines. For higher accuracy on complex documents try `qwen2.5:32b` (~20 GB). Pull a model with `ollama pull <model>`.
+Any locally installed Ollama model appears in the Loctran model picker automatically. Run `ollama list` to see what is available. For this project, use `glm-ocr` for OCR and `translategemma:4b` for translation. On 16 GB+ machines, `translategemma:12b` is the higher-quality option.
 
 **What about scanned PDFs?**
 Loctran automatically detects whether a PDF has a digital text layer. If it does, pdfplumber extracts text directly (fast, accurate). If not — or if you pass `--force-ocr` — Tesseract runs a dual-pass OCR (normal + inverted image) to catch light-on-dark text. Pass `--use-ai-ocr` to route OCR through an Ollama vision model for the highest accuracy on complex layouts.
@@ -160,4 +173,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, running tests, and
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
-Apache 2.0 — © 2026 Anzal KS
+Apache 2.0 — © 2026 Anzal K Shahul

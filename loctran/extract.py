@@ -141,7 +141,7 @@ def rasterize_pdf(pdf_path, output_dir):
     return image_paths
 
 
-def ocr_with_ollama(image_path, model="glm-ocr:latest"):
+def ocr_with_ollama(image_path, model="glm-ocr"):
     """
     Uses Ollama Vision model to extract text from a cropped image region.
     """
@@ -163,6 +163,7 @@ def ocr_with_ollama(image_path, model="glm-ocr:latest"):
             options={
                 "temperature": 0,
                 "num_predict": 500,
+                "num_ctx": 16384,
             },
         )
         if "message" in res and "content" in res["message"]:
@@ -192,7 +193,6 @@ def _clean_ocr_response(text):
         "No introductory",
         "No markdown",
         "Extract the text",
-        "Read the text",
         "markdown",
         "```",
     ]
@@ -248,7 +248,7 @@ def get_segments_digital(pdf_path, page_index):
     return segments
 
 
-def get_segments_hybrid(image_path, use_ai=False, vision_model="glm-ocr:latest"):
+def get_segments_hybrid(image_path, use_ai=False, vision_model="glm-ocr"):
     """
     Uses Tesseract to detect Layout/Segments.
     If use_ai=True, crops segments and sends to AI.
@@ -456,7 +456,7 @@ def get_segments_hybrid(image_path, use_ai=False, vision_model="glm-ocr:latest")
 
 
 def process_individual_segment(
-    word_list, segments, image_path, use_ai, img_obj, vision_model="glm-ocr:latest"
+    word_list, segments, image_path, use_ai, img_obj, vision_model="glm-ocr"
 ):
     """Helper to calculate bbox and text for a list of words, then append to segments."""
     if not word_list:
@@ -773,7 +773,7 @@ def process_file(
     folder_name=None,
     use_ai_ocr=False,
     force_ocr=False,
-    vision_model="glm-ocr:latest",
+    vision_model="glm-ocr",
 ):
     """Extract a PDF, image, or text file into a translation workspace directory."""
     if folder_name:

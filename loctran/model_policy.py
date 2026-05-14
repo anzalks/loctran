@@ -9,7 +9,8 @@ import psutil
 from loctran.translate import DEFAULT_MODEL
 
 logger = logging.getLogger("loctran.model_policy")
-LOW_RESOURCE_MODEL = "qwen2.5:3b"
+DEFAULT_OCR_MODEL = "glm-ocr"
+LOW_RESOURCE_MODEL = DEFAULT_MODEL
 
 
 def _get_ollama() -> Any:
@@ -39,22 +40,31 @@ def estimate_system_ram_gb() -> float:
 
 def choose_startup_model(
     ram_gb: float,
-    default_model: str = DEFAULT_MODEL,
-    low_resource_model: str = LOW_RESOURCE_MODEL,
+    translation_model: str = DEFAULT_MODEL,
+    ocr_model: str = DEFAULT_OCR_MODEL,
+    default_model: str | None = None,
+    low_resource_model: str | None = None,
 ) -> str:
-    """Choose a startup model based on available memory.
+    """Choose a startup translation model.
 
-    Args:
-        ram_gb: System RAM in GiB.
-        default_model: Normal default model for capable machines.
-        low_resource_model: Smaller fallback model for constrained machines.
-
-    Returns:
-        Model tag chosen for startup.
+    In legacy mode (when low_resource_model is provided), preserve the old
+    RAM-based fallback behavior for backward compatibility.
     """
-    if ram_gb < 8.0:
-        return low_resource_model
-    return default_model
+    selected_default = default_model or translation_model
+    legacy_low_resource = low_resource_model
+
+    # Backward compatibility: older positional callers pass low_resource_model
+    # as the third positional argument (bound to ocr_model in the new signature).
+    if (
+        legacy_low_resource is None
+        and ocr_model
+        and not ocr_model.startswith("glm-ocr")
+    ):
+        legacy_low_resource = ocr_model
+
+    if legacy_low_resource and ram_gb < 8.0:
+        return legacy_low_resource
+    return selected_default
 
 
 def extract_model_size_b(model_name: str) -> float | None:
@@ -124,35 +134,73 @@ def pull_model(model_name: str) -> bool:
 
 
 def ensure_startup_model(
-    default_model: str = DEFAULT_MODEL,
-    low_resource_model: str = LOW_RESOURCE_MODEL,
+    translation_model: str = DEFAULT_MODEL,
+    ocr_model: str = DEFAULT_OCR_MODEL,
+    default_model: str | None = None,
+    low_resource_model: str | None = None,
 ) -> dict[str, Any]:
-    """Ensure a safe startup model exists locally based on hardware.
+    """Ensure startup model availability.
 
-    Args:
-        default_model: Preferred default model.
-        low_resource_model: Fallback model for constrained systems.
+    Legacy mode: when both default_model and low_resource_model are provided,
+    preserve the previous single-model pull policy.
 
-    Returns:
-        Status payload with selected model and optional warning.
+    Dual-model mode: verify/pull both OCR and translation models.
     """
+    selected_translation = default_model or translation_model
     ram_gb = estimate_system_ram_gb()
-    selected_model = choose_startup_model(ram_gb, default_model, low_resource_model)
+    selected_model = choose_startup_model(
+        ram_gb,
+        translation_model=selected_translation,
+        ocr_model=ocr_model,
+        default_model=default_model,
+        low_resource_model=low_resource_model,
+    )
+
     warning = None
-    if should_warn_large_model(default_model, ram_gb):
+    if should_warn_large_model(selected_translation, ram_gb):
         warning = (
-            f"Model {default_model} may be too large for {ram_gb:.1f} GiB RAM. "
+            f"Model {selected_translation} may be too large for {ram_gb:.1f} GiB RAM. "
             "Consider a <4B model for smoother performance."
         )
 
-    local_models = list_local_models()
-    pulled = False
-    if not local_models:
-        pulled = pull_model(selected_model)
+    legacy_mode = bool(default_model and low_resource_model)
+    if legacy_mode:
+        local_models = list_local_models()
+        pulled = False
+        if not local_models:
+            pulled = pull_model(selected_model)
+        return {
+            "ram_gb": ram_gb,
+            "selected_model": selected_model,
+            "pulled": pulled,
+            "warning": warning,
+            "required_models": [selected_model],
+            "missing_models": [] if (local_models or pulled) else [selected_model],
+            "pulled_models": [selected_model] if pulled else [],
+            "verified": bool(local_models or pulled),
+        }
+
+    required_models = [ocr_model, selected_translation]
+    local_models = set(list_local_models())
+
+    missing_models = [m for m in required_models if m not in local_models]
+    pulled_models: list[str] = []
+    for model_name in missing_models:
+        if pull_model(model_name):
+            pulled_models.append(model_name)
+
+    refreshed_models = set(list_local_models())
+    still_missing = [m for m in required_models if m not in refreshed_models]
+    pulled = bool(pulled_models)
+    verified = not still_missing
 
     return {
         "ram_gb": ram_gb,
         "selected_model": selected_model,
+        "required_models": required_models,
+        "missing_models": still_missing,
+        "pulled_models": pulled_models,
+        "verified": verified,
         "pulled": pulled,
         "warning": warning,
     }

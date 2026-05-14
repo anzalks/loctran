@@ -35,6 +35,7 @@ def _run_translate(
     input_path: str,
     lang: str,
     model: str,
+    vision_model: str,
     output: str | None,
     batch_size: int,
     extract_only: bool,
@@ -56,6 +57,7 @@ def _run_translate(
         output_dir,
         force_ocr=force_ocr,
         use_ai_ocr=use_ai_ocr,
+        vision_model=vision_model,
     )
     if not doc_dir:
         console.print("[red]Extraction failed. Aborting pipeline.[/red]")
@@ -180,7 +182,17 @@ def translate_command(
     """Translate a file or folder using local OCR + Ollama."""
     settings = load_settings()
     resolved_lang = lang or settings.default_lang or DEFAULT_LANG
-    resolved_model = model or settings.default_model or DEFAULT_MODEL
+    settings_translation_model = getattr(settings, "translation_model", None)
+    if not isinstance(settings_translation_model, str):
+        settings_translation_model = None
+
+    settings_default_model = getattr(settings, "default_model", None)
+    if not isinstance(settings_default_model, str):
+        settings_default_model = None
+
+    resolved_model = (
+        model or settings_translation_model or settings_default_model or DEFAULT_MODEL
+    )
     resolved_batch_size = batch_size or settings.batch_size or BATCH_SIZE
 
     try:
@@ -188,6 +200,7 @@ def translate_command(
             input_path=input_path,
             lang=resolved_lang,
             model=resolved_model,
+            vision_model=settings.ocr_model,
             output=output,
             batch_size=resolved_batch_size,
             extract_only=extract_only,

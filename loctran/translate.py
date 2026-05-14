@@ -10,10 +10,8 @@ from pathlib import Path
 
 DEBUG_MODE = os.getenv("LOCTRAN_DEBUG")
 logger = logging.getLogger("loctran.translate")
-DEFAULT_MODEL = (
-    "qwen2.5:7b"  # ~4 GB; use qwen2.5:32b for higher quality (requires ~20 GB VRAM)
-)
-DEFAULT_LANG = "French"
+DEFAULT_MODEL = "translategemma:4b"
+DEFAULT_LANG = "English"
 BATCH_SIZE = 5
 
 

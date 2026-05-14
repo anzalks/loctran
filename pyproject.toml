@@ -64,6 +64,8 @@ test = [
 ]
 dev = [
   "playwright",
+  "Pillow",
+  "reportlab",
 ]
 
 [project.scripts]

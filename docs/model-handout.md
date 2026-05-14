@@ -1,78 +1,73 @@
 # Loctran Model Handout
 
-This handout explains which Ollama model to use with Loctran and how to pick a safe default for your hardware.
+## Models
 
-## Quick picks
+- OCR: `glm-ocr` (`ollama pull glm-ocr`)
+- Translation: `translategemma:4b` (`ollama pull translategemma:4b`)
+- Quality tier for 16 GB+ machines: `translategemma:12b` (8.1 GB)
 
-- Recommended default: `qwen2.5:7b`
-- Low-resource fallback: `qwen2.5:3b`
-- Higher-quality option: `qwen2.5:32b`
+## Critical operational note for `glm-ocr`
 
-## What Loctran uses by default
+`glm-ocr` must be called with `num_ctx=16384`.
 
-Loctran currently uses `qwen2.5:7b` as the default model for translation because it runs on most machines and gives solid quality.
+The default `num_ctx=4096` causes crashes on image OCR calls. This matters most when calling Ollama APIs directly.
 
-The startup policy also includes a low-resource fallback:
+## Language limitation
 
-- If detected RAM is less than 8 GiB, Loctran selects `qwen2.5:3b`.
-- Otherwise, Loctran selects the normal default model.
+- `glm-ocr` recognizes English and Chinese text only.
+- OCR quality degrades on documents in other languages.
+- `translategemma` still handles translation for 55 languages.
 
 ## Hardware guidance
 
-Use this as a practical rule of thumb:
+- 8 GB: runs both models, expect about 40-50 seconds per page for OCR.
+- 16 GB: recommended minimum for comfortable throughput.
+- 32 GB+: use `translategemma:12b` for higher translation quality.
 
-- 8 GiB RAM or less: prefer `qwen2.5:3b`.
-- 16 GiB RAM: `qwen2.5:7b` is usually the best balance.
-- 32 GiB+ RAM (and strong GPU/VRAM if available): consider `qwen2.5:32b` for harder documents.
+## `translategemma` prompt format
 
-Large models can be unstable on low-memory systems and may cause long latency or failed responses.
+Two blank lines are required before the text to translate.
 
-## Pulling models
+```text
+You are a professional {SOURCE_LANG} ({SOURCE_CODE}) to {TARGET_LANG}
+({TARGET_CODE}) translator. Your goal is to accurately convey the meaning
+and nuances of the original {SOURCE_LANG} text while adhering to
+{TARGET_LANG} grammar, vocabulary, and cultural sensitivities.
+Produce only the {TARGET_LANG} translation, without any additional
+explanations or commentary. Please translate the following {SOURCE_LANG}
+text into {TARGET_LANG}:
 
-```bash
-ollama pull qwen2.5:3b
-ollama pull qwen2.5:7b
-ollama pull qwen2.5:32b
+
+{TEXT}
 ```
 
-Then run:
+## Dynamic model discovery
+
+Any model installed locally via Ollama automatically appears in the Loctran model picker.
+
+Run `ollama list` to see available models. No config change is needed because the picker reads from Ollama at runtime.
+
+## Pull commands
 
 ```bash
-loctran doctor
+ollama pull glm-ocr
+ollama pull translategemma:4b
+ollama pull translategemma:12b   # optional, 16GB+ only
 ```
 
-## Choosing a model in CLI
-
-```bash
-loctran translate document.pdf --lang French --model qwen2.5:7b
-```
-
-## Setting a permanent default
-
-Create or edit `~/.loctran/config.toml`:
+## Config (`~/.loctran/config.toml`)
 
 ```toml
-[translate]
-default_model = "qwen2.5:7b"
-low_resource_model = "qwen2.5:3b"
-default_lang = "French"
-batch_size = 5
+[models]
+ocr_model         = "glm-ocr"
+translation_model = "translategemma:4b"
+default_lang      = "English"
+
+[server]
+port              = 8000
+batch_size        = 5
 ```
 
-## Recommended rollout for teams
+## Diagnostics
 
-- Standard workstation profile: pin `default_model` to `qwen2.5:7b`.
-- Budget laptop profile: pin `default_model` to `qwen2.5:3b`.
-- QA or quality-critical profile: test `qwen2.5:32b` on a subset of documents before broad rollout.
-
-## Troubleshooting
-
-- Model not found: run `ollama pull <model>` and retry.
-- Slow translation or timeouts: switch to a smaller model and reduce `--batch-size`.
-- Inconsistent output quality: retry with `qwen2.5:32b` on supported hardware.
-
-## At a glance
-
-- Speed first: `qwen2.5:3b`
-- Balanced default: `qwen2.5:7b`
-- Quality first: `qwen2.5:32b`
+`loctran doctor` checks that both `glm-ocr` and `translategemma:4b` are present in local Ollama.
