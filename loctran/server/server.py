@@ -15,16 +15,27 @@ from pathlib import Path
 from typing import Dict, Optional, Set
 
 import uvicorn
-from fastapi import (BackgroundTasks, FastAPI, File, HTTPException, Request,
-                     UploadFile, WebSocket, WebSocketDisconnect)
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from loctran.config import AppSettings, load_settings
-from loctran.model_policy import (choose_startup_model, ensure_startup_model,
-                                  estimate_system_ram_gb,
-                                  should_warn_large_model)
+from loctran.model_policy import (
+    choose_startup_model,
+    ensure_startup_model,
+    estimate_system_ram_gb,
+    should_warn_large_model,
+)
 
 # --- Configuration & Logging ---
 SETTINGS: AppSettings = load_settings()
@@ -39,9 +50,9 @@ logging.basicConfig(
 logger = logging.getLogger("loctran")
 
 # Directories
-BASE_DIR = Path(
-    __file__
-).parent.parent.parent  # repo root: loctran/server/server.py → loctran/server → loctran → repo root
+BASE_DIR = (
+    Path(__file__).parent.parent.parent
+)  # repo root: loctran/server/server.py → loctran/server → loctran → repo root
 UPLOAD_DIR = BASE_DIR / "uploads"
 OUTPUT_DIR = BASE_DIR / "outputs"
 
@@ -58,8 +69,12 @@ try:
     from loctran.server.compress import compress_file, format_size, parse_size
     from loctran.server.store import cleanup_old_jobs as _store_cleanup
     from loctran.server.store import init_db, list_active_jobs, upsert_job
-    from loctran.translate import (DEFAULT_MODEL, check_ollama_connection,
-                                   list_models, process_folder)
+    from loctran.translate import (
+        DEFAULT_MODEL,
+        check_ollama_connection,
+        list_models,
+        process_folder,
+    )
 except ImportError as e:
     logger.error(f"Failed to import local modules: {e}")
     sys.exit(1)
@@ -895,9 +910,9 @@ def build_server(host: str = "0.0.0.0", port: int = 8000) -> uvicorn.Server:
     """Build and register a Uvicorn server instance for controlled shutdown."""
     global _server_instance
     log_config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
-    log_config["formatters"]["access"][
-        "fmt"
-    ] = "%(asctime)s - %(levelname)s - %(message)s"
+    log_config["formatters"]["access"]["fmt"] = (
+        "%(asctime)s - %(levelname)s - %(message)s"
+    )
 
     config = uvicorn.Config(
         app,

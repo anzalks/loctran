@@ -166,6 +166,7 @@ class TestCompressImageToSize:
 
         result = compress_image_to_size(str(src), str(dst), target_size=1024 * 1024)
         assert dst.exists()
+        assert "original_size" in result
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +182,7 @@ class TestCompressFile:
 
         from loctran.server.compress import compress_file
 
-        compress_file(str(src), str(dst), target_size=1024 * 1024)
+        result = compress_file(str(src), str(dst), target_size=1024 * 1024)
         # Already small — should copy unchanged
         assert result["original_size"] == result["compressed_size"]
 
@@ -193,7 +194,7 @@ class TestCompressFile:
         dst = tmp_path / "out.jpg"
         from loctran.server.compress import compress_file
 
-        compress_file(str(src), str(dst), target_size=1024 * 1024)
+        result = compress_file(str(src), str(dst), target_size=1024 * 1024)
         assert dst.exists()
         assert "original_size" in result
 

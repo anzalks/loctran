@@ -341,7 +341,7 @@ def get_segments_hybrid(
         all_words.sort(key=lambda w: (w["top"], w["left"]))
 
         # Dedupe strictly overlapping identical words
-        unique_words = []
+        unique_words: List[Dict[str, Any]] = []
         for w in all_words:
             is_duplicate = False
             for existing in unique_words:
@@ -380,7 +380,7 @@ def get_segments_hybrid(
         # Iterate, if vertical distance to current line center is small, add to line.
 
         unique_words.sort(key=lambda w: w["top"])
-        lines = []
+        lines: List[List[Dict[str, Any]]] = []
 
         for w in unique_words:
             added = False
@@ -647,8 +647,8 @@ def process_page(args: Tuple[str, str, int, bool, bool, str]) -> Dict[str, Any]:
                         )
                         line_gap = med_h * 0.6
 
-                        lines = []
-                        current_line = []
+                        lines: List[List[Dict[str, Any]]] = []
+                        current_line: List[Dict[str, Any]] = []
                         last_top = -9999
 
                         for w in words:
