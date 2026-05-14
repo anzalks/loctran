@@ -181,7 +181,7 @@ def ensure_startup_model(
         }
 
     required_models = [ocr_model, selected_translation]
-    local_models = set(list_local_models())
+    local_models = list_local_models()
 
     missing_models = [m for m in required_models if m not in local_models]
     pulled_models: list[str] = []
