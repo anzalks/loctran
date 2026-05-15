@@ -139,7 +139,7 @@ def compress_pdf_safe(input_path: str, output_path: str, target_size: int) -> di
 def compress_image_to_size(input_path: str, output_path: str, target_size: int) -> dict:
     """Compress image (JPG/PNG)."""
     # Reuse logic but simplified for brevity in this rewrite
-    img = Image.open(input_path)
+    img: Image.Image = Image.open(input_path)
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
 
