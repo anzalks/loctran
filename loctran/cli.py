@@ -13,7 +13,7 @@ from rich.console import Console
 
 from loctran.config import load_settings, write_defaults
 from loctran.diagnostics import run_doctor
-from loctran.extract import process_file
+from loctran.extraction import process_file
 from loctran.translate import BATCH_SIZE, DEFAULT_LANG, DEFAULT_MODEL, process_folder
 
 console = Console()

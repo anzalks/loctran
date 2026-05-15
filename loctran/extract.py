@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import json
 import logging
@@ -8,7 +10,7 @@ import shutil
 import tempfile
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 from tqdm import tqdm
 
@@ -23,7 +25,7 @@ except ImportError:
 
     LangDetectException = LangDetectError  # type: ignore
 
-    def detect_langs(_text: str) -> List[Any]:
+    def detect_langs(_text: str) -> list[Any]:
         raise LangDetectException(
             "langdetect is not installed. Install with: pip install loctran"
         )
@@ -33,6 +35,8 @@ logger = logging.getLogger("loctran.extract")
 
 # Suppress pdfplumber warnings
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
+
+
 
 # --- SYSTEM PATHS ---
 POSSIBLE_TESSERACT_PATHS = [
@@ -52,7 +56,7 @@ def _missing_dependency_error(module_name: str, extra_name: str) -> DependencyEr
     )
 
 
-def _get_pytesseract():
+def _get_pytesseract() -> Any:
     try:
         import pytesseract  # type: ignore
     except ImportError as exc:
@@ -60,7 +64,7 @@ def _get_pytesseract():
     return pytesseract
 
 
-def _get_pdfplumber():
+def _get_pdfplumber() -> Any:
     try:
         import pdfplumber  # type: ignore
     except ImportError as exc:
@@ -68,7 +72,7 @@ def _get_pdfplumber():
     return pdfplumber
 
 
-def _get_pdfium():
+def _get_pdfium() -> Any:
     try:
         import pypdfium2 as pdfium  # type: ignore
     except ImportError as exc:
@@ -76,7 +80,7 @@ def _get_pdfium():
     return pdfium
 
 
-def _get_ollama():
+def _get_ollama() -> Any:
     try:
         import ollama  # type: ignore
     except ImportError as exc:
@@ -86,7 +90,7 @@ def _get_ollama():
     return ollama
 
 
-def _get_cv2():
+def _get_cv2() -> Any:
     try:
         import cv2  # type: ignore
     except ImportError as exc:
@@ -106,7 +110,6 @@ def _get_pillow_image() -> Any:
 
 def _configure_tesseract_path() -> Any:
     pytesseract = _get_pytesseract()
-
     tess_path = shutil.which("tesseract")
     if tess_path:
         pytesseract.pytesseract.tesseract_cmd = tess_path
@@ -119,18 +122,12 @@ def _configure_tesseract_path() -> Any:
 
 
 def check_dependencies() -> bool:
-    """Verifies that external tools like Tesseract are installed.
-
-    Returns:
-        bool: True if all dependencies are satisfied, False otherwise.
-    """
     missing = []
     pytesseract = _configure_tesseract_path()
     if not shutil.which("tesseract") and not os.path.exists(
         pytesseract.pytesseract.tesseract_cmd
     ):
         missing.append("tesseract (brew install tesseract tesseract-lang)")
-
     if missing:
         logger.error("CRITICAL: Missing system dependencies:")
         for tool in missing:
@@ -139,76 +136,56 @@ def check_dependencies() -> bool:
     return True
 
 
-def rasterize_pdf(pdf_path: Union[str, Path], output_dir: Path) -> List[str]:
-    """Convert PDF pages to images using pypdfium2.
-
-    Args:
-        pdf_path: Path to the input PDF file.
-        output_dir: Directory where the output images should be saved.
-
-    Returns:
-        A list of absolute paths to the generated JPEG images.
-
-    Raises:
-        ExtractionError: If PDF rasterization fails.
-    """
+def rasterize_pdf(pdf_path: "str | Path", output_dir: Path) -> "list[str]":
     try:
         pdfium = _get_pdfium()
         pdf = pdfium.PdfDocument(str(pdf_path))
         n_pages = len(pdf)
-        image_paths: List[str] = []
-
-        scale = 2  # 2x scaling for better OCR quality (approx 144 DPI if base is 72)
-
+        image_paths: list[str] = []
+        scale = 2
         for i in range(n_pages):
             page = pdf[i]
             bitmap = page.render(scale=scale)
             pil_image = bitmap.to_pil()
-
             image_path = output_dir / f"slide_{i + 1}.jpg"
             pil_image.save(image_path, format="JPEG", quality=90)
             image_paths.append(str(image_path))
-
         return image_paths
     except Exception as e:
         raise ExtractionError(f"Failed to rasterize PDF: {e}") from e
 
 
-def ocr_with_ollama(image_path: str, model: str = "glm-ocr") -> Optional[str]:
-    """Uses Ollama Vision model to extract text from a cropped image region.
+def _clean_ocr_response(text: str) -> str:
+    lines = text.split("\n")
+    cleaned = []
+    skip_phrases = [
+        "RULES:", "Output ONLY", "Do NOT hallucinate", "IGNORE table",
+        "IGNORE garbage", "Maintain the original", "No introductory",
+        "No markdown", "Extract the text", "markdown", "```",
+    ]
+    for line in lines:
+        if any(phrase in line for phrase in skip_phrases):
+            continue
+        cleaned.append(line)
+    result = "\n".join(cleaned).strip()
+    return result.replace("`", "")
 
-    Args:
-        image_path: Absolute path to the image to run OCR on.
-        model: The vision model to use for extraction.
 
-    Returns:
-        The extracted text, or None if extraction fails or yields noise.
-    """
+def ocr_with_ollama(image_path: str, model: str = "glm-ocr") -> "str | None":
     try:
         ollama = _get_ollama()
         res = ollama.chat(
             model=model,
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are an OCR engine. Output only the text visible in the image. Nothing else.",
-                },
-                {
-                    "role": "user",
-                    "content": "Read the text in this image.",
-                    "images": [image_path],
-                },
+                {"role": "system", "content": "You are an OCR engine. Output only the text visible in the image. Nothing else."},
+                {"role": "user", "content": "Read the text in this image.", "images": [image_path]},
             ],
-            options={
-                "temperature": 0,
-                "num_predict": 500,
-                "num_ctx": 16384,
-            },
+            options={"temperature": 0, "num_predict": 500, "num_ctx": 16384},
         )
         if "message" in res and "content" in res["message"]:
             content = res["message"]["content"].strip()
             content = _clean_ocr_response(content)
-            if not content or re.match(r"^[|I1l!i\-_—\s]+$", content):
+            if not content or re.match(r"^[|I1l!i\-_\u2014\s]+$", content):
                 return ""
             return content
         return None
@@ -217,388 +194,194 @@ def ocr_with_ollama(image_path: str, model: str = "glm-ocr") -> Optional[str]:
         return None
 
 
-def _clean_ocr_response(text: str) -> str:
-    """Strip instruction bleed-through and markdown artifacts from OCR output.
-
-    Args:
-        text: Raw OCR output from the vision LLM.
-
-    Returns:
-        Cleaned text string.
-    """
-    lines = text.split("\n")
-    cleaned = []
-    skip_phrases = [
-        "RULES:",
-        "Output ONLY",
-        "Do NOT hallucinate",
-        "IGNORE table",
-        "IGNORE garbage",
-        "Maintain the original",
-        "No introductory",
-        "No markdown",
-        "Extract the text",
-        "markdown",
-        "```",
-    ]
-    for line in lines:
-        if any(phrase in line for phrase in skip_phrases):
-            continue
-        cleaned.append(line)
-    result = "\n".join(cleaned).strip()
-    result = result.replace("`", "")
-    return result
-
-
-def get_segments_digital(
-    pdf_path: Union[str, Path], page_index: int
-) -> List[Dict[str, Any]]:
-    """Extracts text segments using pdfplumber for digital PDFs.
-
-    Args:
-        pdf_path: Path to the digital PDF.
-        page_index: The 0-based page index to extract.
-
-    Returns:
-        List of dictionaries containing text, bounding box, and extraction method.
-    """
-    segments: List[Dict[str, Any]] = []
+def get_segments_digital(pdf_path: "str | Path", page_index: int) -> "list[dict[str, Any]]":
+    segments: list[dict[str, Any]] = []
     try:
         pdfplumber = _get_pdfplumber()
         with pdfplumber.open(pdf_path) as pdf:
             page = pdf.pages[page_index]
             words = page.extract_words()
-
             for w in words:
-                segments.append(
-                    {
-                        "text": w["text"],
-                        "bbox": [
-                            w["x0"],
-                            w["top"],
-                            w["x1"] - w["x0"],
-                            w["bottom"] - w["top"],
-                        ],  # x, y, w, h
-                        "method": "Digital",
-                    }
-                )
+                segments.append({
+                    "text": w["text"],
+                    "bbox": [w["x0"], w["top"], w["x1"] - w["x0"], w["bottom"] - w["top"]],
+                    "method": "Digital",
+                })
     except Exception as e:
         logger.debug("Failed to extract digital segments on page %d: %s", page_index, e)
     return segments
 
 
-def get_segments_hybrid(
-    image_path: str, use_ai: bool = False, vision_model: str = "glm-ocr"
-) -> List[Dict[str, Any]]:
-    """Uses Tesseract to detect Layout/Segments and optionally Ollama for OCR correction.
-
-    Args:
-        image_path: Path to the image file.
-        use_ai: If True, crops segments and sends to the vision model.
-        vision_model: The AI vision model to use if use_ai is True.
-
-    Returns:
-        List of segment dictionaries containing text and bounding boxes.
-    """
-    segments: List[Dict[str, Any]] = []
-    pytesseract = _configure_tesseract_path()
-    pil_image = _get_pillow_image()
-
-    def get_raw_data(img_obj: Any) -> Dict[str, Any]:
-        return pytesseract.image_to_data(img_obj, output_type=pytesseract.Output.DICT)
-
-    try:
-        img = pil_image.open(image_path)
-
-        # 1. Normal Pass
-        data_normal = get_raw_data(img)
-
-        # 2. Inverted Pass (for dark backgrounds)
-        from PIL import ImageOps
-
-        img_inverted = ImageOps.invert(img.convert("RGB"))
-        data_inverted = get_raw_data(img_inverted)
-
-        # 3. Combine Data (normalize to list of dicts for easier processing)
-        all_words = []
-
-        def process_data(data_dict, source):
-            n = len(data_dict["text"])
-            for i in range(n):
-                if int(data_dict["conf"][i]) > 0 and data_dict["text"][i].strip():
-                    all_words.append(
-                        {
-                            "text": data_dict["text"][i],
-                            "left": data_dict["left"][i],
-                            "top": data_dict["top"][i],
-                            "width": data_dict["width"][i],
-                            "height": data_dict["height"][i],
-                            "conf": int(data_dict["conf"][i]),
-                            "source": source,
-                        }
-                    )
-
-        process_data(data_normal, "normal")
-        process_data(data_inverted, "inverted")
-
-        # 4. Deduplicate (Spatial Clustering)
-        # We need to group words into lines/blocks again, but across two sources.
-        # Simple strategy: spatial index? Or just sort and merge?
-        # Sort by Top, Left
-        all_words.sort(key=lambda w: (w["top"], w["left"]))
-
-        # Dedupe strictly overlapping identical words
-        unique_words: List[Dict[str, Any]] = []
-        for w in all_words:
-            is_duplicate = False
-            for existing in unique_words:
-                # Check intersection
-                # If same text and heavy overlap
-                if w["text"] == existing["text"]:
-                    # Calc IoU or just overlap
-                    x1 = max(w["left"], existing["left"])
-                    y1 = max(w["top"], existing["top"])
-                    x2 = min(
-                        w["left"] + w["width"], existing["left"] + existing["width"]
-                    )
-                    y2 = min(
-                        w["top"] + w["height"], existing["top"] + existing["height"]
-                    )
-
-                    if x1 < x2 and y1 < y2:
-                        overlap_area = (x2 - x1) * (y2 - y1)
-                        area1 = w["width"] * w["height"]
-                        area2 = existing["width"] * existing["height"]
-
-                        if overlap_area > 0.5 * min(area1, area2):
-                            is_duplicate = True
-                            # Keep the higher confidence one?
-                            if w["conf"] > existing["conf"]:
-                                existing.update(w)  # Replace with better one
-                            break
-
-            if not is_duplicate:
-                unique_words.append(w)
-
-        # 5. Re-group into Lines (Custom Grouping Logic since we lost block_num)
-        # We need to reconstruct lines from the bag of unique words.
-        # Simple line grouping algorithm:
-        # Sort by Top.
-        # Iterate, if vertical distance to current line center is small, add to line.
-
-        unique_words.sort(key=lambda w: w["top"])
-        lines: List[List[Dict[str, Any]]] = []
-
-        for w in unique_words:
-            added = False
-            w_cy = w["top"] + w["height"] / 2
-
-            for line in lines:
-                # Check vertical overlap with line average
-                # Line is list of words.
-                # Average center of line?
-                l_cy = sum(lw["top"] + lw["height"] / 2 for lw in line) / len(line)
-                l_h = sum(lw["height"] for lw in line) / len(line)
-
-                if abs(w_cy - l_cy) < l_h * 0.5:  # Vertically aligned
-                    line.append(w)
-                    # Resort line by left
-                    line.sort(key=lambda lw: lw["left"])
-                    added = True
-                    break
-
-            if not added:
-                lines.append([w])
-
-        # 6. Build Final Segments from Lines (Splitting by Column Gaps)
-        for line in lines:
-            line.sort(key=lambda w: w["left"])  # Ensure left-to-right
-
-            if not line:
-                continue
-
-            # Filter Noise / Grid Lines
-            # Reject items that are just single vertical/horizontal bars interpreted as text
-            filtered_line = []
-            for w in line:
-                t = w["text"].strip()
-                # Heuristic: Single char that is I, l, 1, |, !, i, etc. AND extreme aspect ratio?
-                # Or just literal | or _ or -
-                if t in ["|", "I", "l", "1", "!", "i", "_", "-", "—"]:
-                    ratio = w["height"] / w["width"] if w["width"] > 0 else 1
-                    # Vertical line check (tall and thin)
-                    if t in ["|", "I", "l", "1", "!", "i"] and ratio > 3.0:
-                        continue  # Skip noise
-                    # Horizontal line check (wide and short)
-                    if t in ["_", "-", "—"] and ratio < 0.3:
-                        continue
-                # Reject "Bee", "Ee" if they appear to be grid lines?
-                # (User report: "Visual acuity Bee Ee") - "Bee" might be noise.
-                # Hard to genericize "Bee", but the chars above cover common grid artifacts.
-
-                filtered_line.append(w)
-
-            line = filtered_line
-            if not line:
-                continue
-
-            # Calculate median char width for this line to detect gaps
-            # Char width ~= Word Width / len(text)
-            char_widths = [
-                w["width"] / len(w["text"]) for w in line if len(w["text"]) > 0
-            ]
-            if char_widths:
-                med_char_w = sorted(char_widths)[len(char_widths) // 2]
-            else:
-                med_char_w = 10  # Fallback
-
-            # Threshold for "Gap" -> Table Column Split
-            # 3 spaces is a safe bet for a column gap vs word gap
-            gap_threshold = med_char_w * 3.5
-
-            current_segment_words = [line[0]]
-
-            for i in range(1, len(line)):
-                prev = line[i - 1]
-                curr = line[i]
-
-                gap = curr["left"] - (prev["left"] + prev["width"])
-
-                if gap > gap_threshold:
-                    # LIMIT REACHED: Finalize current segment
-                    process_individual_segment(
-                        current_segment_words,
-                        segments,
-                        image_path,
-                        use_ai,
-                        img,
-                        vision_model,
-                    )
-                    current_segment_words = []
-
-                current_segment_words.append(curr)
-
-            # Process last chunk
-            if current_segment_words:
-                process_individual_segment(
-                    current_segment_words,
-                    segments,
-                    image_path,
-                    use_ai,
-                    img,
-                    vision_model,
-                )
-
-    except Exception as e:
-        logger.error(
-            "Segment extraction failed for %s: %s\n%s",
-            image_path,
-            e,
-            traceback.format_exc(),
-        )
-
-    return segments
-
-
 def process_individual_segment(
-    word_list: List[Dict[str, Any]],
-    segments: List[Dict[str, Any]],
+    word_list: "list[dict[str, Any]]",
+    segments: "list[dict[str, Any]]",
     image_path: str,
     use_ai: bool,
     img_obj: Any,
     vision_model: str = "glm-ocr",
 ) -> None:
-    """Calculates bbox and text for a list of words and appends to the segment list.
-
-    Args:
-        word_list: List of word dictionaries from Tesseract.
-        segments: Running list of segments to append to.
-        image_path: Path to the original image.
-        use_ai: Whether to use AI OCR for text extraction.
-        img_obj: Pillow Image object.
-        vision_model: The vision model to use.
-    """
     if not word_list:
         return
-
-    # Smart Box Logic
-    valid_geom = [w for w in word_list if w["conf"] > 30]
-    if not valid_geom:
-        valid_geom = word_list
-
+    valid_geom = [w for w in word_list if w["conf"] > 30] or word_list
     tops = sorted([w["top"] for w in valid_geom])
     heights = sorted([w["height"] for w in valid_geom])
-
     if not tops:
-        return  # Should not happen
-
+        return
     mid_idx = len(tops) // 2
     med_top = tops[mid_idx]
     med_height = heights[mid_idx]
-
     min_x = min(w["left"] for w in valid_geom)
     max_x = max(w["left"] + w["width"] for w in valid_geom)
-
     real_min_y = min(w["top"] for w in valid_geom)
     real_max_y = max(w["top"] + w["height"] for w in valid_geom)
     real_h = real_max_y - real_min_y
-
     bbox = [min_x, real_min_y, max_x - min_x, real_h]
-
     if real_h > 2.5 * med_height:
-        y1 = med_top - int(med_height * 0.2)
-        h_box = int(med_height * 1.5)
-        y1 = max(0, y1)
-        bbox = [min_x, y1, max_x - min_x, h_box]
-
+        y1 = max(0, med_top - int(med_height * 0.2))
+        bbox = [min_x, y1, max_x - min_x, int(med_height * 1.5)]
     full_text = " ".join(w["text"] for w in word_list)
     method = "Dual-Pass OCR"
-
-    # Optional: AI Correction on the Cleaned Segment
-    # Only if box is reasonable size
-    if use_ai and (bbox[2] > 20) and (bbox[3] > 10):
+    if use_ai and bbox[2] > 20 and bbox[3] > 10:
         try:
-            crop = img_obj.crop(
-                (bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3])
-            )
+            crop = img_obj.crop((bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3]))
             with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
                 temp_crop_path = tmp_file.name
-
             crop.save(temp_crop_path)
             ai_text = ocr_with_ollama(temp_crop_path, model=vision_model)
             if ai_text:
                 full_text = ai_text
                 method = "AI OCR (Segment)"
-
             if os.path.exists(temp_crop_path):
                 os.remove(temp_crop_path)
         except Exception as e:
             logger.debug("AI Segment failed: %s", e)
-
     word_heights = [w["height"] for w in word_list if w["height"] > 0]
     min_wh = min(word_heights) if word_heights else bbox[3]
-
-    segments.append(
-        {"text": full_text, "bbox": bbox, "min_word_height": min_wh, "method": method}
-    )
+    segments.append({"text": full_text, "bbox": bbox, "min_word_height": min_wh, "method": method})
 
 
-def sanitize_segments(segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Applies outlier rejection to bounding boxes.
-
-    Args:
-        segments: List of segment dictionaries.
-
-    Returns:
-        The sanitized segments list.
-    """
-    sanitized: List[Dict[str, Any]] = []
-    for s in segments:
-        sanitized.append(s)
-    return sanitized
+def sanitize_segments(segments: "list[dict[str, Any]]") -> "list[dict[str, Any]]":
+    return list(segments)
 
 
-def process_page(args: Tuple[str, str, int, bool, bool, str]) -> Dict[str, Any]:
+def merge_words(word_list: "list[dict[str, Any]]", sx: float, sy: float) -> "dict[str, Any]":
+    tops = sorted([w["top"] for w in word_list])
+    heights = sorted([w["height"] for w in word_list])
+    mid = len(tops) // 2
+    med_top = tops[mid]
+    med_height = heights[mid]
+    min_height = heights[0]
+    x0 = min(w["x0"] for w in word_list)
+    x1 = max(w["x1"] for w in word_list)
+    real_top = min(w["top"] for w in word_list)
+    real_bottom = max(w["bottom"] for w in word_list)
+    real_h = real_bottom - real_top
+    final_top = real_top
+    final_h = real_h
+    if real_h > 2.5 * med_height:
+        final_top = max(0, med_top - (med_height * 0.2))
+        final_h = med_height * 1.5
+    text = " ".join(w["text"] for w in word_list)
+    return {"text": text, "bbox": [x0*sx, final_top*sy, (x1-x0)*sx, final_h*sy], "min_word_height": min_height*sy, "method": "Digital"}
+
+
+def get_segments_hybrid(image_path: str, use_ai: bool = False, vision_model: str = "glm-ocr") -> "list[dict[str, Any]]":
+    segments: list[dict[str, Any]] = []
+    pytesseract = _configure_tesseract_path()
+    pil_image = _get_pillow_image()
+
+    def get_raw_data(img_obj: Any) -> dict[str, Any]:
+        return pytesseract.image_to_data(img_obj, output_type=pytesseract.Output.DICT)
+
+    try:
+        img = pil_image.open(image_path)
+        data_normal = get_raw_data(img)
+        from PIL import ImageOps
+        img_inverted = ImageOps.invert(img.convert("RGB"))
+        data_inverted = get_raw_data(img_inverted)
+        all_words: list[dict[str, Any]] = []
+
+        def process_data(data_dict: dict[str, Any], source: str) -> None:
+            n = len(data_dict["text"])
+            for idx in range(n):
+                if int(data_dict["conf"][idx]) > 0 and data_dict["text"][idx].strip():
+                    all_words.append({
+                        "text": data_dict["text"][idx], "left": data_dict["left"][idx],
+                        "top": data_dict["top"][idx], "width": data_dict["width"][idx],
+                        "height": data_dict["height"][idx], "conf": int(data_dict["conf"][idx]),
+                        "source": source,
+                    })
+
+        process_data(data_normal, "normal")
+        process_data(data_inverted, "inverted")
+        all_words.sort(key=lambda w: (w["top"], w["left"]))
+        unique_words: list[dict[str, Any]] = []
+        for w in all_words:
+            is_dup = False
+            for existing in unique_words:
+                if w["text"] == existing["text"]:
+                    x1o = max(w["left"], existing["left"])
+                    y1o = max(w["top"], existing["top"])
+                    x2o = min(w["left"]+w["width"], existing["left"]+existing["width"])
+                    y2o = min(w["top"]+w["height"], existing["top"]+existing["height"])
+                    if x1o < x2o and y1o < y2o:
+                        oa = (x2o-x1o)*(y2o-y1o)
+                        if oa > 0.5*min(w["width"]*w["height"], existing["width"]*existing["height"]):
+                            is_dup = True
+                            if w["conf"] > existing["conf"]:
+                                existing.update(w)
+                            break
+            if not is_dup:
+                unique_words.append(w)
+        unique_words.sort(key=lambda w: w["top"])
+        seg_lines: list[list[dict[str, Any]]] = []
+        for w in unique_words:
+            added = False
+            w_cy = w["top"] + w["height"] / 2
+            for line in seg_lines:
+                l_cy = sum(lw["top"]+lw["height"]/2 for lw in line) / len(line)
+                l_h = sum(lw["height"] for lw in line) / len(line)
+                if abs(w_cy - l_cy) < l_h * 0.5:
+                    line.append(w)
+                    line.sort(key=lambda lw: lw["left"])
+                    added = True
+                    break
+            if not added:
+                seg_lines.append([w])
+        for line in seg_lines:
+            line.sort(key=lambda w: w["left"])
+            if not line:
+                continue
+            filtered = []
+            for w in line:
+                t = w["text"].strip()
+                if t in ["|","I","l","1","!","i","_","-","\u2014"]:
+                    ratio = w["height"] / w["width"] if w["width"] > 0 else 1
+                    if t in ["|","I","l","1","!","i"] and ratio > 3.0:
+                        continue
+                    if t in ["_","-","\u2014"] and ratio < 0.3:
+                        continue
+                filtered.append(w)
+            line = filtered
+            if not line:
+                continue
+            char_widths = [w["width"]/len(w["text"]) for w in line if len(w["text"])>0]
+            med_cw = sorted(char_widths)[len(char_widths)//2] if char_widths else 10
+            gap_thr = med_cw * 3.5
+            cur = [line[0]]
+            for i in range(1, len(line)):
+                if line[i]["left"] - (line[i-1]["left"]+line[i-1]["width"]) > gap_thr:
+                    process_individual_segment(cur, segments, image_path, use_ai, img, vision_model)
+                    cur = []
+                cur.append(line[i])
+            if cur:
+                process_individual_segment(cur, segments, image_path, use_ai, img, vision_model)
+    except Exception as e:
+        logger.error("Segment extraction failed for %s: %s\n%s", image_path, e, traceback.format_exc())
+    return segments
+
+
+def process_page(args: tuple[str, str, int, bool, bool, str]) -> dict[str, Any]:
     """Process one page image and return the extracted slide payload.
 
     Args:
@@ -615,7 +398,7 @@ def process_page(args: Tuple[str, str, int, bool, bool, str]) -> Dict[str, Any]:
     """
     pdf_path_str, image_path, i, use_ai_ocr, force_ocr, vision_model = args
 
-    item: Dict[str, Any] = {
+    item: dict[str, Any] = {
         "slide_num": i + 1,
         "segments": [],
         "full_text": "",  # Concatenation for fallback/search
@@ -654,8 +437,8 @@ def process_page(args: Tuple[str, str, int, bool, bool, str]) -> Dict[str, Any]:
                         )
                         line_gap = med_h * 0.6
 
-                        lines: List[List[Dict[str, Any]]] = []
-                        current_line: List[Dict[str, Any]] = []
+                        lines: list[list[dict[str, Any]]] = []
+                        current_line: list[dict[str, Any]] = []
                         last_top = -9999
 
                         for w in words:
@@ -718,55 +501,9 @@ def process_page(args: Tuple[str, str, int, bool, bool, str]) -> Dict[str, Any]:
     return item
 
 
-def merge_words(
-    word_list: List[Dict[str, Any]], sx: float, sy: float
-) -> Dict[str, Any]:
-    """Merges a list of pdfplumber words into a segment with outlier rejection.
-
-    Args:
-        word_list: List of word dictionaries from pdfplumber.
-        sx: X-axis scaling factor.
-        sy: Y-axis scaling factor.
-
-    Returns:
-        A segment dictionary containing the text and scaled bounding box.
-    """
-    tops = sorted([w["top"] for w in word_list])
-    heights = sorted([w["height"] for w in word_list])
-
-    mid = len(tops) // 2
-    med_top = tops[mid]
-    med_height = heights[mid]
-    min_height = heights[0]
-
-    x0 = min(w["x0"] for w in word_list)
-    x1 = max(w["x1"] for w in word_list)
-
-    real_top = min(w["top"] for w in word_list)
-    real_bottom = max(w["bottom"] for w in word_list)
-    real_h = real_bottom - real_top
-
-    final_top = real_top
-    final_h = real_h
-
-    if real_h > 2.5 * med_height:
-        final_top = med_top - (med_height * 0.2)
-        final_h = med_height * 1.5
-        final_top = max(0, final_top)
-
-    text = " ".join(w["text"] for w in word_list)
-
-    return {
-        "text": text,
-        "bbox": [x0 * sx, final_top * sy, (x1 - x0) * sx, final_h * sy],
-        "min_word_height": min_height * sy,
-        "method": "Digital",
-    }
-
-
 def _process_text_file(
-    txt_path: Path, doc_dir: Path, progress_callback: Optional[Any] = None
-) -> Optional[Path]:
+    txt_path: Path, doc_dir: Path, progress_callback: Any | None = None
+) -> Path | None:
     """Extract paragraphs from a .txt file into input_data.json.
 
     Args:
@@ -832,12 +569,12 @@ def _process_text_file(
 def process_file(
     pdf_path: Path,
     output_dir: Path,
-    progress_callback: Optional[Any] = None,
-    folder_name: Optional[str] = None,
+    progress_callback: Any | None = None,
+    folder_name: str | None = None,
     use_ai_ocr: bool = False,
     force_ocr: bool = False,
     vision_model: str = "glm-ocr",
-) -> Optional[Path]:
+) -> Path | None:
     """Extract a PDF, image, or text file into a translation workspace directory.
 
     Args:
@@ -871,7 +608,7 @@ def process_file(
     if pdf_path.suffix.lower() == ".txt":
         return _process_text_file(pdf_path, doc_dir, progress_callback)
 
-    image_paths: List[str] = []
+    image_paths: list[str] = []
 
     if pdf_path.suffix.lower() in [".jpg", ".jpeg", ".png"]:
         msg = "   -> Processing Single Image..."
