@@ -40,7 +40,14 @@ jobs:
           python -m venv test_env
           source test_env/bin/activate
           pip install dist/*.whl
-          python -c "import loctran; assert loctran.__version__, 'Missing version'; print('Import successful. Version:', loctran.__version__)"
+          python -c "
+          import loctran
+          import loctran.extraction
+          import loctran.translate
+          import loctran.server
+          print('version:', loctran.__version__)
+          print('all subpackages imported OK')
+          "
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

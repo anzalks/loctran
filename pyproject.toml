@@ -80,8 +80,9 @@ dev = [
 loctran = "loctran.cli:cli_entry"
 loctran-doctor = "loctran.diagnostics:run_doctor"
 
-[tool.setuptools]
-packages = ["loctran", "loctran.server"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["loctran*"]
 
 [tool.setuptools.package-data]
 "loctran.server" = ["static/*", "static/**/*"]
