@@ -37,7 +37,6 @@ logger = logging.getLogger("loctran.extract")
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
 
-
 # --- SYSTEM PATHS ---
 POSSIBLE_TESSERACT_PATHS = [
     "/opt/homebrew/bin/tesseract",
@@ -159,9 +158,17 @@ def _clean_ocr_response(text: str) -> str:
     lines = text.split("\n")
     cleaned = []
     skip_phrases = [
-        "RULES:", "Output ONLY", "Do NOT hallucinate", "IGNORE table",
-        "IGNORE garbage", "Maintain the original", "No introductory",
-        "No markdown", "Extract the text", "markdown", "```",
+        "RULES:",
+        "Output ONLY",
+        "Do NOT hallucinate",
+        "IGNORE table",
+        "IGNORE garbage",
+        "Maintain the original",
+        "No introductory",
+        "No markdown",
+        "Extract the text",
+        "markdown",
+        "```",
     ]
     for line in lines:
         if any(phrase in line for phrase in skip_phrases):
@@ -177,8 +184,15 @@ def ocr_with_ollama(image_path: str, model: str = "glm-ocr") -> "str | None":
         res = ollama.chat(
             model=model,
             messages=[
-                {"role": "system", "content": "You are an OCR engine. Output only the text visible in the image. Nothing else."},
-                {"role": "user", "content": "Read the text in this image.", "images": [image_path]},
+                {
+                    "role": "system",
+                    "content": "You are an OCR engine. Output only the text visible in the image. Nothing else.",
+                },
+                {
+                    "role": "user",
+                    "content": "Read the text in this image.",
+                    "images": [image_path],
+                },
             ],
             options={"temperature": 0, "num_predict": 500, "num_ctx": 16384},
         )
@@ -194,7 +208,9 @@ def ocr_with_ollama(image_path: str, model: str = "glm-ocr") -> "str | None":
         return None
 
 
-def get_segments_digital(pdf_path: "str | Path", page_index: int) -> "list[dict[str, Any]]":
+def get_segments_digital(
+    pdf_path: "str | Path", page_index: int
+) -> "list[dict[str, Any]]":
     segments: list[dict[str, Any]] = []
     try:
         pdfplumber = _get_pdfplumber()
@@ -202,11 +218,18 @@ def get_segments_digital(pdf_path: "str | Path", page_index: int) -> "list[dict[
             page = pdf.pages[page_index]
             words = page.extract_words()
             for w in words:
-                segments.append({
-                    "text": w["text"],
-                    "bbox": [w["x0"], w["top"], w["x1"] - w["x0"], w["bottom"] - w["top"]],
-                    "method": "Digital",
-                })
+                segments.append(
+                    {
+                        "text": w["text"],
+                        "bbox": [
+                            w["x0"],
+                            w["top"],
+                            w["x1"] - w["x0"],
+                            w["bottom"] - w["top"],
+                        ],
+                        "method": "Digital",
+                    }
+                )
     except Exception as e:
         logger.debug("Failed to extract digital segments on page %d: %s", page_index, e)
     return segments
@@ -243,7 +266,9 @@ def process_individual_segment(
     method = "Dual-Pass OCR"
     if use_ai and bbox[2] > 20 and bbox[3] > 10:
         try:
-            crop = img_obj.crop((bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3]))
+            crop = img_obj.crop(
+                (bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3])
+            )
             with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
                 temp_crop_path = tmp_file.name
             crop.save(temp_crop_path)
@@ -257,14 +282,18 @@ def process_individual_segment(
             logger.debug("AI Segment failed: %s", e)
     word_heights = [w["height"] for w in word_list if w["height"] > 0]
     min_wh = min(word_heights) if word_heights else bbox[3]
-    segments.append({"text": full_text, "bbox": bbox, "min_word_height": min_wh, "method": method})
+    segments.append(
+        {"text": full_text, "bbox": bbox, "min_word_height": min_wh, "method": method}
+    )
 
 
 def sanitize_segments(segments: "list[dict[str, Any]]") -> "list[dict[str, Any]]":
     return list(segments)
 
 
-def merge_words(word_list: "list[dict[str, Any]]", sx: float, sy: float) -> "dict[str, Any]":
+def merge_words(
+    word_list: "list[dict[str, Any]]", sx: float, sy: float
+) -> "dict[str, Any]":
     tops = sorted([w["top"] for w in word_list])
     heights = sorted([w["height"] for w in word_list])
     mid = len(tops) // 2
@@ -282,10 +311,17 @@ def merge_words(word_list: "list[dict[str, Any]]", sx: float, sy: float) -> "dic
         final_top = max(0, med_top - (med_height * 0.2))
         final_h = med_height * 1.5
     text = " ".join(w["text"] for w in word_list)
-    return {"text": text, "bbox": [x0*sx, final_top*sy, (x1-x0)*sx, final_h*sy], "min_word_height": min_height*sy, "method": "Digital"}
+    return {
+        "text": text,
+        "bbox": [x0 * sx, final_top * sy, (x1 - x0) * sx, final_h * sy],
+        "min_word_height": min_height * sy,
+        "method": "Digital",
+    }
 
 
-def get_segments_hybrid(image_path: str, use_ai: bool = False, vision_model: str = "glm-ocr") -> "list[dict[str, Any]]":
+def get_segments_hybrid(
+    image_path: str, use_ai: bool = False, vision_model: str = "glm-ocr"
+) -> "list[dict[str, Any]]":
     segments: list[dict[str, Any]] = []
     pytesseract = _configure_tesseract_path()
     pil_image = _get_pillow_image()
@@ -297,6 +333,7 @@ def get_segments_hybrid(image_path: str, use_ai: bool = False, vision_model: str
         img = pil_image.open(image_path)
         data_normal = get_raw_data(img)
         from PIL import ImageOps
+
         img_inverted = ImageOps.invert(img.convert("RGB"))
         data_inverted = get_raw_data(img_inverted)
         all_words: list[dict[str, Any]] = []
@@ -305,12 +342,17 @@ def get_segments_hybrid(image_path: str, use_ai: bool = False, vision_model: str
             n = len(data_dict["text"])
             for idx in range(n):
                 if int(data_dict["conf"][idx]) > 0 and data_dict["text"][idx].strip():
-                    all_words.append({
-                        "text": data_dict["text"][idx], "left": data_dict["left"][idx],
-                        "top": data_dict["top"][idx], "width": data_dict["width"][idx],
-                        "height": data_dict["height"][idx], "conf": int(data_dict["conf"][idx]),
-                        "source": source,
-                    })
+                    all_words.append(
+                        {
+                            "text": data_dict["text"][idx],
+                            "left": data_dict["left"][idx],
+                            "top": data_dict["top"][idx],
+                            "width": data_dict["width"][idx],
+                            "height": data_dict["height"][idx],
+                            "conf": int(data_dict["conf"][idx]),
+                            "source": source,
+                        }
+                    )
 
         process_data(data_normal, "normal")
         process_data(data_inverted, "inverted")
@@ -322,11 +364,18 @@ def get_segments_hybrid(image_path: str, use_ai: bool = False, vision_model: str
                 if w["text"] == existing["text"]:
                     x1o = max(w["left"], existing["left"])
                     y1o = max(w["top"], existing["top"])
-                    x2o = min(w["left"]+w["width"], existing["left"]+existing["width"])
-                    y2o = min(w["top"]+w["height"], existing["top"]+existing["height"])
+                    x2o = min(
+                        w["left"] + w["width"], existing["left"] + existing["width"]
+                    )
+                    y2o = min(
+                        w["top"] + w["height"], existing["top"] + existing["height"]
+                    )
                     if x1o < x2o and y1o < y2o:
-                        oa = (x2o-x1o)*(y2o-y1o)
-                        if oa > 0.5*min(w["width"]*w["height"], existing["width"]*existing["height"]):
+                        oa = (x2o - x1o) * (y2o - y1o)
+                        if oa > 0.5 * min(
+                            w["width"] * w["height"],
+                            existing["width"] * existing["height"],
+                        ):
                             is_dup = True
                             if w["conf"] > existing["conf"]:
                                 existing.update(w)
@@ -339,7 +388,7 @@ def get_segments_hybrid(image_path: str, use_ai: bool = False, vision_model: str
             added = False
             w_cy = w["top"] + w["height"] / 2
             for line in seg_lines:
-                l_cy = sum(lw["top"]+lw["height"]/2 for lw in line) / len(line)
+                l_cy = sum(lw["top"] + lw["height"] / 2 for lw in line) / len(line)
                 l_h = sum(lw["height"] for lw in line) / len(line)
                 if abs(w_cy - l_cy) < l_h * 0.5:
                     line.append(w)
@@ -355,29 +404,43 @@ def get_segments_hybrid(image_path: str, use_ai: bool = False, vision_model: str
             filtered = []
             for w in line:
                 t = w["text"].strip()
-                if t in ["|","I","l","1","!","i","_","-","\u2014"]:
+                if t in ["|", "I", "l", "1", "!", "i", "_", "-", "\u2014"]:
                     ratio = w["height"] / w["width"] if w["width"] > 0 else 1
-                    if t in ["|","I","l","1","!","i"] and ratio > 3.0:
+                    if t in ["|", "I", "l", "1", "!", "i"] and ratio > 3.0:
                         continue
-                    if t in ["_","-","\u2014"] and ratio < 0.3:
+                    if t in ["_", "-", "\u2014"] and ratio < 0.3:
                         continue
                 filtered.append(w)
             line = filtered
             if not line:
                 continue
-            char_widths = [w["width"]/len(w["text"]) for w in line if len(w["text"])>0]
-            med_cw = sorted(char_widths)[len(char_widths)//2] if char_widths else 10
+            char_widths = [
+                w["width"] / len(w["text"]) for w in line if len(w["text"]) > 0
+            ]
+            med_cw = sorted(char_widths)[len(char_widths) // 2] if char_widths else 10
             gap_thr = med_cw * 3.5
             cur = [line[0]]
             for i in range(1, len(line)):
-                if line[i]["left"] - (line[i-1]["left"]+line[i-1]["width"]) > gap_thr:
-                    process_individual_segment(cur, segments, image_path, use_ai, img, vision_model)
+                if (
+                    line[i]["left"] - (line[i - 1]["left"] + line[i - 1]["width"])
+                    > gap_thr
+                ):
+                    process_individual_segment(
+                        cur, segments, image_path, use_ai, img, vision_model
+                    )
                     cur = []
                 cur.append(line[i])
             if cur:
-                process_individual_segment(cur, segments, image_path, use_ai, img, vision_model)
+                process_individual_segment(
+                    cur, segments, image_path, use_ai, img, vision_model
+                )
     except Exception as e:
-        logger.error("Segment extraction failed for %s: %s\n%s", image_path, e, traceback.format_exc())
+        logger.error(
+            "Segment extraction failed for %s: %s\n%s",
+            image_path,
+            e,
+            traceback.format_exc(),
+        )
     return segments
 
 
