@@ -53,15 +53,8 @@ def choose_startup_model(
     selected_default = default_model or translation_model
     legacy_low_resource = low_resource_model
 
-    # Backward compatibility: older positional callers pass low_resource_model
-    # as the third positional argument (bound to ocr_model in the new signature).
-    if (
-        legacy_low_resource is None
-        and ocr_model
-        and not ocr_model.startswith("glm-ocr")
-    ):
-        legacy_low_resource = ocr_model
-
+    # Legacy mode: callers that pre-date the dual-model split pass
+    # low_resource_model explicitly. New callers always leave it None.
     if legacy_low_resource and ram_gb < 8.0:
         return legacy_low_resource
     return selected_default

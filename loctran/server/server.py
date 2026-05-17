@@ -65,7 +65,7 @@ sys.path.append(str(BASE_DIR))
 sys.path.append(str(Path(__file__).parent))
 
 try:
-    from loctran.extract import process_file
+    from loctran.extraction import process_file
     from loctran.server.compress import compress_file, format_size, parse_size
     from loctran.server.store import cleanup_old_jobs as _store_cleanup
     from loctran.server.store import init_db, list_active_jobs, upsert_job
@@ -496,8 +496,8 @@ def get_startup_info():
     ram_gb = estimate_system_ram_gb()
     recommended_model = choose_startup_model(
         ram_gb,
-        SETTINGS.default_model,
-        SETTINGS.low_resource_model,
+        default_model=SETTINGS.default_model,
+        low_resource_model=SETTINGS.low_resource_model,
     )
     return {
         "recommended_model": recommended_model,

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import ast
 import json
@@ -7,9 +9,12 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable
+
+from PIL import Image  # type: ignore
 
 from loctran.exceptions import DependencyError, TranslationError
+from loctran.render import get_overlay_html
 
 DEBUG_MODE = os.getenv("LOCTRAN_DEBUG")
 logger = logging.getLogger("loctran.translate")
@@ -28,12 +33,11 @@ def _get_ollama() -> Any:
     return ollama
 
 
-def check_ollama_connection(model_name: str, retries: int = 3) -> bool:
+def check_ollama_connection(model_name: str) -> bool:
     """Checks if the local Ollama server is reachable.
 
     Args:
         model_name: The name of the model to check.
-        retries: Unused parameter for now.
 
     Returns:
         True if connected, False otherwise.
@@ -46,7 +50,7 @@ def check_ollama_connection(model_name: str, retries: int = 3) -> bool:
         return False
 
 
-def list_models() -> List[str]:
+def list_models() -> list[str]:
     """Returns a list of available Ollama models.
 
     Returns:
@@ -58,7 +62,7 @@ def list_models() -> List[str]:
         return [DEFAULT_MODEL]
 
 
-def _extract_json_array(content: str) -> List[Dict[str, Any]]:
+def _extract_json_array(content: str) -> list[dict[str, Any]]:
     """Try multiple strategies to extract a JSON array from an LLM response.
 
     Args:
@@ -116,8 +120,8 @@ def _extract_json_array(content: str) -> List[Dict[str, Any]]:
 
 
 def _translate_chunk(
-    chunk: List[Dict[str, Any]], model: str, target_lang: str
-) -> Dict[int, str]:
+    chunk: list[dict[str, Any]], model: str, target_lang: str
+) -> dict[int, str]:
     """Translates a small list of text segments.
 
     Tries batch JSON first, then sequential per-item as a fallback.
@@ -222,11 +226,11 @@ def _translate_chunk(
 
 
 def translate_segments(
-    segments: List[Dict[str, Any]],
+    segments: list[dict[str, Any]],
     model: str,
     target_lang: str,
     batch_size: int = BATCH_SIZE,
-) -> Dict[int, str]:
+) -> dict[int, str]:
     """Translates a list of segments, chunked by batch_size to avoid context overflow.
 
     Args:
@@ -319,88 +323,11 @@ def translate_segments(
     return results
 
 
-def get_overlay_html(
-    width: float, height: float, image_url: str, segments: List[Dict[str, Any]]
-) -> str:
-    """Build an HTML overlay that places translated text boxes over the page image.
-
-    Args:
-        width: Image width.
-        height: Image height.
-        image_url: Relative URL/path to the image.
-        segments: List of segment dictionaries containing 'bbox' and 'translation'.
-
-    Returns:
-        Generated HTML snippet.
-    """
-    aspect_ratio = width / height if height > 0 else 1
-
-    html = f"""
-    <div class="overlay-container" style="position: relative; display: inline-block; container-type: inline-size; width: 100%;">
-        <img src="{image_url}" style="display: block; width: 100%; height: auto;">
-    """
-
-    for s in segments:
-        bbox = s["bbox"]
-        if not s.get("translation"):
-            continue
-
-        left_p = (bbox[0] / width) * 100
-        top_p = (bbox[1] / height) * 100
-        width_p = (bbox[2] / width) * 100
-        height_p = (bbox[3] / height) * 100
-
-        # Font size = exact bbox height. The bounding box height IS the measured
-        # text size from the original. For perspective/angled images, segments
-        # store min_word_height — use that when available so text always fits.
-        effective_height_p = height_p
-        if s.get("min_word_height") and height > 0:
-            min_h_p = (s["min_word_height"] / height) * 100
-            effective_height_p = min_h_p
-
-        # Convert height percentage to font-size in container-query units.
-        # Box height in px = (container_width / aspect_ratio) * (height_p / 100)
-        # In cqw: font-size = (effective_height_p / aspect_ratio) cqw
-        # Use 0.85 factor: font-size includes descenders, bbox is cap-height only
-        font_size_expr = (
-            f"calc(({effective_height_p:.4f} / {aspect_ratio:.4f}) * 0.85cqw)"
-        )
-
-        html += f"""
-        <div class="translated-box" style="
-            position: absolute;
-            left: {left_p:.4f}%;
-            top: {top_p:.4f}%;
-            width: {width_p:.4f}%;
-            height: {height_p:.4f}%;
-            background: white;
-            color: #1a1a2e;
-            overflow: hidden;
-            font-size: {font_size_expr};
-            display: flex;
-            align-items: center;
-            justify-content: flex-start;
-            text-align: left;
-            padding: 0 1px;
-            box-sizing: border-box;
-            line-height: 1.1;
-            white-space: nowrap;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            z-index: 10;
-        " title="{s["text"]}">
-            {s["translation"]}
-        </div>
-        """
-
-    html += "</div>"
-    return html
-
-
 def process_folder(
-    folder_path: Union[str, Path],
+    folder_path: str | Path,
     lang: str,
     model: str,
-    progress_callback: Optional[Callable[[str, int], None]] = None,
+    progress_callback: Callable[[str, int], None] | None = None,
     batch_size: int = BATCH_SIZE,
 ) -> None:
     """Processes a folder containing extraction data, translates it, and builds an HTML report.
@@ -521,38 +448,38 @@ def process_folder(
 
     # Process
     total = len(data)
-    for i, slide in enumerate(data):
-        slide_num = slide["slide_num"]
-        segments = slide.get("segments", [])
-        img_path = slide["image_path"]
+    with open(html_path, "a") as f:
+        for i, slide in enumerate(data):
+            slide_num = slide["slide_num"]
+            segments = slide.get("segments", [])
+            img_path = slide["image_path"]
 
-        # ── TEXT-ONLY slide (no image, e.g. from a .txt file) ──────────────
-        if not img_path:
-            segments_to_trans = [s for s in segments if s.get("text", "").strip()]
-            if not segments_to_trans:
-                continue
-            translations = translate_segments(
-                segments_to_trans, model, lang, batch_size=batch_size
-            )
-            for idx, s in enumerate(segments_to_trans):
-                s["translation"] = translations.get(idx, "")
-
-            original_text = "\n\n".join(s["text"] for s in segments_to_trans)
-            translated_text = "\n\n".join(
-                (
-                    s["translation"]
-                    if s.get("translation")
-                    else f"[untranslated: {s['text'][:40]}…]"
+            # ── TEXT-ONLY slide (no image, e.g. from a .txt file) ──────────────
+            if not img_path:
+                segments_to_trans = [s for s in segments if s.get("text", "").strip()]
+                if not segments_to_trans:
+                    continue
+                translations = translate_segments(
+                    segments_to_trans, model, lang, batch_size=batch_size
                 )
-                for s in segments_to_trans
-            )
-            translated_cls = (
-                "text-translated"
-                if any(s.get("translation") for s in segments_to_trans)
-                else "text-missing"
-            )
+                for idx, s in enumerate(segments_to_trans):
+                    s["translation"] = translations.get(idx, "")
 
-            with open(html_path, "a") as f:
+                original_text = "\n\n".join(s["text"] for s in segments_to_trans)
+                translated_text = "\n\n".join(
+                    (
+                        s["translation"]
+                        if s.get("translation")
+                        else f"[untranslated: {s['text'][:40]}…]"
+                    )
+                    for s in segments_to_trans
+                )
+                translated_cls = (
+                    "text-translated"
+                    if any(s.get("translation") for s in segments_to_trans)
+                    else "text-missing"
+                )
+
                 f.write(f"""
             <div class="row">
                 <div class="col col-left">
@@ -565,48 +492,45 @@ def process_folder(
                 </div>
             </div>
             """)
-            if progress_callback:
-                progress_callback(
-                    f"Processed paragraph {slide_num}", int((i + 1) / total * 100)
+                if progress_callback:
+                    progress_callback(
+                        f"Processed paragraph {slide_num}", int((i + 1) / total * 100)
+                    )
+                continue
+
+            # ── IMAGE slide (PDF / image file) ─────────────────────────────────
+            rel_img = f"images/{Path(img_path).name}"
+
+            # Translate meaningful segments
+            segments_to_trans = [s for s in segments if len(s["text"]) > 2]
+
+            if not segments_to_trans:
+                logger.debug(
+                    f"Slide {slide_num}: no translatable segments, skipping translation call."
                 )
-            continue
-
-        # ── IMAGE slide (PDF / image file) ─────────────────────────────────
-        rel_img = f"images/{Path(img_path).name}"
-
-        # Translate meaningful segments
-        segments_to_trans = [s for s in segments if len(s["text"]) > 2]
-
-        if not segments_to_trans:
-            logger.debug(
-                f"Slide {slide_num}: no translatable segments, skipping translation call."
-            )
-            translations = {}
-        else:
-            translations = translate_segments(
-                segments_to_trans, model, lang, batch_size=batch_size
-            )
-            if not translations:
-                logger.warning(
-                    f"Slide {slide_num}: translate_segments returned empty results for "
-                    f"{len(segments_to_trans)} segments — overlay will show original image only."
+                translations = {}
+            else:
+                translations = translate_segments(
+                    segments_to_trans, model, lang, batch_size=batch_size
                 )
+                if not translations:
+                    logger.warning(
+                        f"Slide {slide_num}: translate_segments returned empty results for "
+                        f"{len(segments_to_trans)} segments — overlay will show original image only."
+                    )
 
-        # Update segments with translation
-        for idx, s in enumerate(segments_to_trans):
-            s["translation"] = translations.get(idx, "")
+            # Update segments with translation
+            for idx, s in enumerate(segments_to_trans):
+                s["translation"] = translations.get(idx, "")
 
-        # Get Image Dims (for percentage calc)
-        from PIL import Image
+            # Get Image Dims (for percentage calc)
+            with Image.open(img_path) as img:
+                w, h = img.size
 
-        with Image.open(img_path) as img:
-            w, h = img.size
+            # Generate Overlay HTML
+            overlay_html = get_overlay_html(w, h, rel_img, segments_to_trans)
 
-        # Generate Overlay HTML
-        overlay_html = get_overlay_html(w, h, rel_img, segments_to_trans)
-
-        # Append to Report
-        with open(html_path, "a") as f:
+            # Append to Report
             f.write(f"""
             <div class="row">
                 <div class="col col-left">
@@ -620,12 +544,11 @@ def process_folder(
             </div>
             """)
 
-        if progress_callback:
-            progress_callback(
-                f"Processed slide {slide_num}", int((i + 1) / total * 100)
-            )
+            if progress_callback:
+                progress_callback(
+                    f"Processed slide {slide_num}", int((i + 1) / total * 100)
+                )
 
-    with open(html_path, "a") as f:
         f.write("</body></html>")
 
 
