@@ -38,9 +38,8 @@ jobs:
       - name: Create fresh environment and smoke test
         run: |
           python -m venv test_env
-          source test_env/bin/activate
-          pip install dist/*.whl
-          python -c "
+          test_env/bin/python -m pip install dist/*.whl
+          test_env/bin/python -c "
           import loctran
           import loctran.extraction
           import loctran.translate
