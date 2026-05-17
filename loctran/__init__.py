@@ -1,3 +1,3 @@
 """Loctran package."""
 
-__version__ = "0.1.1b11"
+__version__ = "0.1.1b12"

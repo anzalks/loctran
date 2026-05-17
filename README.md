@@ -83,7 +83,7 @@ On startup, Loctran will try to start Ollama if it is installed and will pull th
 Run `loctran doctor` to check everything at once:
 
 ```
-loctran-doctor v0.1.1b11
+loctran-doctor v0.1.1b12
 ─────────────────────────────────────
 ✓  Python         3.11.9
 ✓  Tesseract      5.3.4  (langs: eng fra deu jpn +47)
