@@ -25,15 +25,15 @@
 
 | 1. Home | 1.1 PDF Upload |
 |---|---|
-| ![1. Home](docs/screenshots/app_home.png) | ![1.1 PDF Upload](docs/screenshots/pdf_uploaded.png) |
+| ![1. Home](https://raw.githubusercontent.com/anzalks/loctran/main/docs/screenshots/app_home.png) | ![1.1 PDF Upload](https://raw.githubusercontent.com/anzalks/loctran/main/docs/screenshots/pdf_uploaded.png) |
 
 | 2. Translation Configured | 2.1 Translation In Progress |
 |---|---|
-| ![2. Translation Configured](docs/screenshots/translation_configured.png) | ![2.1 Translation In Progress](docs/screenshots/translation_in_progress.png) |
+| ![2. Translation Configured](https://raw.githubusercontent.com/anzalks/loctran/main/docs/screenshots/translation_configured.png) | ![2.1 Translation In Progress](https://raw.githubusercontent.com/anzalks/loctran/main/docs/screenshots/translation_in_progress.png) |
 
 | 3. Result | 3.1 Translation Complete |
 |---|---|
-| ![3. Result](docs/screenshots/04_result.png) | ![3.1 Translation Complete](docs/screenshots/translation_complete.png) |
+| ![3. Result](https://raw.githubusercontent.com/anzalks/loctran/main/docs/screenshots/04_result.png) | ![3.1 Translation Complete](https://raw.githubusercontent.com/anzalks/loctran/main/docs/screenshots/translation_complete.png) |
 
 ---
 
@@ -83,7 +83,7 @@ On startup, Loctran will try to start Ollama if it is installed and will pull th
 Run `loctran doctor` to check everything at once:
 
 ```
-loctran-doctor v0.1.1b13
+loctran-doctor v0.1.1b14
 ─────────────────────────────────────
 ✓  Python         3.11.9
 ✓  Tesseract      5.3.4  (langs: eng fra deu jpn +47)
