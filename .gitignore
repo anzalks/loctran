@@ -27,6 +27,9 @@ env/
 *.gif
 !docs/screenshots/*.png
 !loctran/server/static/logo.png
+# Demo assets (GIF is checked in; input PDF is regenerated each run)
+!demo/*.gif
+demo/*.pdf
 
 
 # Data Outputs and User Data (CRITICAL: Prevent data leaks)

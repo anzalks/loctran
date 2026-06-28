@@ -1,5 +1,8 @@
 recursive-include loctran/server/static *
 
+prune demo
+prune scripts
+
 exclude .cursorrules
 exclude SKILL.md
 exclude rules.md
