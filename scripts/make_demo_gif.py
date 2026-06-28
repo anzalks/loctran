@@ -296,12 +296,17 @@ def _bbox_centre(bbox: dict) -> tuple[float, float]:
 # ── GIF assembly ──────────────────────────────────────────────────────────────
 
 
+GIF_WIDTH = 640
+GIF_HEIGHT = 480
+
+
 def build_gif(
     frames: list[tuple[bytes, int]],
     output_path: Path,
-    max_width: int = 1100,
+    width: int = GIF_WIDTH,
+    height: int = GIF_HEIGHT,
 ) -> None:
-    """Assemble (png_bytes, duration_ms) pairs into an animated GIF."""
+    """Assemble (png_bytes, duration_ms) pairs into an animated GIF at exact size."""
     from PIL import Image
     import io
 
@@ -310,11 +315,19 @@ def build_gif(
 
     for png_bytes, dur in frames:
         img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
-        if img.width > max_width:
-            ratio = max_width / img.width
-            img = img.resize(
-                (max_width, int(img.height * ratio)), Image.Resampling.LANCZOS
-            )
+        # Scale to fill width, then crop/pad height to hit exactly width×height
+        scale = width / img.width
+        scaled_h = int(img.height * scale)
+        img = img.resize((width, scaled_h), Image.Resampling.LANCZOS)
+        if scaled_h >= height:
+            # Crop vertically centred
+            top = (scaled_h - height) // 2
+            img = img.crop((0, top, width, top + height))
+        else:
+            # Pad with white below
+            canvas = Image.new("RGB", (width, height), (255, 255, 255))
+            canvas.paste(img, (0, 0))
+            img = canvas
         # Convert to 192-colour palette for a smaller file
         img_p = img.convert("P", palette=Image.Palette.ADAPTIVE, colors=192)
         pil_frames.append(img_p)
