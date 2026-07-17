@@ -80,9 +80,17 @@
                         <polyline points="10 9 9 9 8 9"></polyline>
                     </svg>
                 </div>
-                <div class="upload-text">Drag & Drop PDF / Image here</div>
-                <div class="upload-subtext">Processed files will be saved to the same directory.</div>
-                <input type="file" id="file-input" accept=".pdf,.jpg,.jpeg,.png" style="display: none;">
+                <div class="upload-text">Drag & Drop PDF / Image / TXT here</div>
+                <div class="upload-subtext">PDF, JPG, PNG, TXT — max 50 MB</div>
+                <input type="file" id="file-input" accept=".pdf,.jpg,.jpeg,.png,.txt" style="display: none;">
+            </div>
+
+            <!-- F5.2: Inline error panel (replaces alert/reload) -->
+            <div id="error-panel" class="error-panel" style="display: none;">
+                <p id="error-message"></p>
+                <button id="error-retry-btn" style="display:none;">Retry</button>
+                <button id="error-default-btn" style="display:none;">Use default output folder</button>
+                <button id="error-dismiss-btn">Dismiss</button>
             </div>
 
             <p id="file-name"
@@ -107,7 +115,35 @@
                     </select>
                 </div>
 
-                <!-- Line 2: Target Language -->
+                <!-- F5.9: Source Language -->
+                <div class="control-group" style="grid-column: 1 / -1;">
+                    <label for="source-lang-select">Source Language</label>
+                    <select id="source-lang-select">
+                        <option value="auto" selected>Auto-detect</option>
+                        <option value="Arabic">Arabic</option>
+                        <option value="Chinese (Simplified)">Chinese (Simplified)</option>
+                        <option value="Chinese (Traditional)">Chinese (Traditional)</option>
+                        <option value="Dutch">Dutch</option>
+                        <option value="English">English</option>
+                        <option value="French">French</option>
+                        <option value="German">German</option>
+                        <option value="Hindi">Hindi</option>
+                        <option value="Indonesian">Indonesian</option>
+                        <option value="Italian">Italian</option>
+                        <option value="Japanese">Japanese</option>
+                        <option value="Korean">Korean</option>
+                        <option value="Persian">Persian</option>
+                        <option value="Polish">Polish</option>
+                        <option value="Portuguese">Portuguese</option>
+                        <option value="Russian">Russian</option>
+                        <option value="Spanish">Spanish</option>
+                        <option value="Turkish">Turkish</option>
+                        <option value="Ukrainian">Ukrainian</option>
+                        <option value="Vietnamese">Vietnamese</option>
+                    </select>
+                </div>
+
+                <!-- Target Language -->
                 <div class="control-group" style="grid-column: 1 / -1;">
                     <label for="lang-select">Target Language</label>
                     <select id="lang-select">
@@ -273,6 +309,8 @@
                 <div class="progress-bar-fill" id="progress-fill"></div>
             </div>
             <div class="status-text" id="status-text">Initializing...</div>
+            <!-- F5.10: Cancel button -->
+            <button id="cancel-btn" class="btn-cancel">Cancel</button>
         </div>
 
         <!-- Step 3: Result -->
@@ -299,34 +337,24 @@
     </div>
 
     <script>
-        // WebSocket Heartbeat (Keeps server alive while browser is open)
+        // WebSocket Heartbeat
         let heartbeatWs = null;
         let heartbeatInterval = null;
 
         function setupWebSocket() {
             const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
             heartbeatWs = new WebSocket(`${proto}://${window.location.host}/ws_heartbeat`);
-
             heartbeatWs.onopen = () => {
-                console.log("[INFO] Connected to server.");
                 heartbeatInterval = setInterval(() => {
                     if (heartbeatWs && heartbeatWs.readyState === WebSocket.OPEN) heartbeatWs.send("ping");
                 }, 30000);
             };
-
             heartbeatWs.onclose = () => {
-                if (heartbeatInterval) {
-                    clearInterval(heartbeatInterval);
-                    heartbeatInterval = null;
-                }
-                console.log("[WARN] Disconnected from server.");
+                clearInterval(heartbeatInterval);
+                heartbeatInterval = null;
             };
-
-            heartbeatWs.onerror = (err) => {
-                console.error("WebSocket error:", err);
-            };
+            heartbeatWs.onerror = (err) => console.error("WebSocket error:", err);
         }
-
         setupWebSocket();
 
         const dropZone = document.getElementById('drop-zone');
@@ -334,44 +362,75 @@
         const fileNameDisplay = document.getElementById('file-name');
         const startBtn = document.getElementById('start-btn');
         const startupWarningBanner = document.getElementById('startup-warning-banner');
+
         const startupInfoPromise = fetch('/api/startup-info')
-            .then(async (res) => {
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                return res.json();
-            })
-            .catch((error) => {
-                console.warn('[startup-info] failed:', error);
-                return null;
-            });
+            .then(async (res) => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
+            .catch((err) => { console.warn('[startup-info] failed:', err); return null; });
 
         let selectedFile = null;
         let jobId = null;
-        let currentMode = null; // 'translator' or 'converter'
+        let currentMode = null;
         let startupWarningDismissed = false;
+        let activeInterval = null;
+        let _pendingFolderResolve = null; // F5.6: folder fallback promise
+
+        // F5.2: Error panel helpers
+        function showError(msg, showRetry, showDefault) {
+            document.getElementById('error-message').textContent = msg;
+            document.getElementById('error-retry-btn').style.display = showRetry ? 'inline-block' : 'none';
+            document.getElementById('error-default-btn').style.display = showDefault ? 'inline-block' : 'none';
+            document.getElementById('error-panel').style.display = 'block';
+        }
+        function hideError() { document.getElementById('error-panel').style.display = 'none'; }
+
+        document.getElementById('error-retry-btn').addEventListener('click', () => {
+            hideError();
+            startBtn.disabled = false;
+            startBtn.textContent = getBtnLabel();
+        });
+        document.getElementById('error-dismiss-btn').addEventListener('click', hideError);
+
+        // F5.6: folder fallback — resolve pending promise when user clicks "Use default"
+        document.getElementById('error-default-btn').addEventListener('click', () => {
+            hideError();
+            if (_pendingFolderResolve) { _pendingFolderResolve(null); _pendingFolderResolve = null; }
+        });
 
         document.getElementById('dismiss-startup-warning').addEventListener('click', () => {
             startupWarningDismissed = true;
             startupWarningBanner.style.display = 'none';
         });
 
-        startupInfoPromise.then((startupInfo) => {
-            if (!startupInfo) return;
-            if (startupInfo.large_model_warning && !startupWarningDismissed) {
-                startupWarningBanner.style.display = 'flex';
-            }
+        startupInfoPromise.then((si) => {
+            if (si?.large_model_warning && !startupWarningDismissed) startupWarningBanner.style.display = 'flex';
         });
 
-        // Navigation Logic
+        // F5.7: Centralized button labels
+        function getBtnLabel() {
+            if (currentMode === 'translator') return 'Start Translation';
+            if (currentMode === 'converter') return 'Start Conversion';
+            return 'Start';
+        }
+
+        // F5.7: Reset file state on navigation
+        function resetFileState() {
+            selectedFile = null;
+            fileNameDisplay.textContent = '';
+            fileNameDisplay.style.display = 'none';
+            startBtn.disabled = true;
+            fileInput.value = '';
+            hideError();
+        }
+
         function navigateTo(mode) {
             const landing = document.getElementById('landing-page');
             const header = document.getElementById('feature-header');
             const upload = document.getElementById('upload-section');
-            const result = document.getElementById('result-section');
             const title = document.getElementById('feature-title');
 
-            // Reset
-            result.style.display = 'none'; // Hide result if going back
+            document.getElementById('result-section').style.display = 'none';
             document.getElementById('progress-section').style.display = 'none';
+            resetFileState(); // F5.7
 
             if (mode === 'landing') {
                 landing.style.display = 'block';
@@ -384,7 +443,6 @@
                 upload.style.display = 'block';
                 currentMode = mode;
 
-                // Toggle Specific Controls
                 const transControls = document.getElementById('translator-controls');
                 const convControls = document.getElementById('converter-controls');
 
@@ -392,118 +450,146 @@
                     title.textContent = "PDF Translator";
                     transControls.style.display = 'grid';
                     convControls.style.display = 'none';
-                    startBtn.textContent = "Start Translation";
                     loadModels();
                 } else {
                     title.textContent = "PDF Converter";
                     transControls.style.display = 'none';
                     convControls.style.display = 'grid';
-                    startBtn.textContent = "Start Conversion";
                 }
+                startBtn.textContent = getBtnLabel(); // F5.7
             }
         }
 
-        // 1. Fetch & populate model dropdowns from Ollama
+        // F5.5: Role-filtered model loading
         async function loadModels() {
             const translateSel = document.getElementById('translate-model');
             const visionSel = document.getElementById('vision-model');
-
             translateSel.innerHTML = '<option value="">Loading…</option>';
             visionSel.innerHTML = '<option value="">Loading…</option>';
 
             try {
-                const res = await fetch('/api/models');
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const data = await res.json();
-                const models = data.models || [];
-                console.log('[loadModels] received', models.length, 'models:', models);
+                const [transRes, visionRes] = await Promise.all([
+                    fetch('/api/models?role=translation'),
+                    fetch('/api/models?role=vision'),
+                ]);
+                const transModels = ((await transRes.json()).models) || [];
+                const visionModels = ((await visionRes.json()).models) || [];
 
-                translateSel.innerHTML = '';
-                visionSel.innerHTML = '';
+                translateSel.innerHTML = transModels.length
+                    ? transModels.map(m => `<option value="${m.name}">${m.name}</option>`).join('')
+                    : '<option value="">No translation models found — is Ollama running?</option>';
 
-                if (models.length === 0) {
-                    translateSel.innerHTML = '<option value="">No models found — is Ollama running?</option>';
-                    visionSel.innerHTML = '<option value="">No models found</option>';
-                    return;
-                }
+                visionSel.innerHTML = visionModels.length
+                    ? visionModels.map(m => `<option value="${m.name}">${m.name}</option>`).join('')
+                    : '<option value="">No vision models found</option>';
 
-                models.forEach(m => {
-                    const name = m.name || '';
-                    if (!name) return;
+                const si = await startupInfoPromise;
+                const rec = si?.recommended_model || '';
+                if (rec && transModels.some(m => m.name === rec)) translateSel.value = rec;
 
-                    const optT = document.createElement('option');
-                    optT.value = name;
-                    optT.textContent = name;
-                    translateSel.appendChild(optT);
-
-                    const optV = document.createElement('option');
-                    optV.value = name;
-                    optV.textContent = name;
-                    visionSel.appendChild(optV);
-                });
-
-                const startupInfo = await startupInfoPromise;
-
-                // Auto-select preferred defaults
-                const recommendedModel = startupInfo?.recommended_model || '';
-                if (recommendedModel && models.some((m) => m.name === recommendedModel)) {
-                    translateSel.value = recommendedModel;
-                } else {
-                    const tDef = models.find(m => m.name && m.name.toLowerCase().includes('translategemma'));
-                    if (tDef) translateSel.value = tDef.name;
-                }
-
-                const vDef = models.find(m => m.name && m.name.toLowerCase().includes('glm-ocr'));
+                const vDef = visionModels.find(m => m.name && m.name.toLowerCase().includes('glm-ocr'));
                 if (vDef) visionSel.value = vDef.name;
 
-                if (startupInfo?.large_model_warning && !startupWarningDismissed) {
-                    startupWarningBanner.style.display = 'flex';
-                }
-
+                if (si?.large_model_warning && !startupWarningDismissed) startupWarningBanner.style.display = 'flex';
             } catch (e) {
                 console.error('[loadModels] failed:', e);
-                translateSel.innerHTML = '<option value="">Error — check console</option>';
-                visionSel.innerHTML = '<option value="">Error — check console</option>';
+                translateSel.innerHTML = '<option value="">Error loading models</option>';
+                visionSel.innerHTML = '<option value="">Error loading models</option>';
             }
         }
 
         function toggleVisionRow() {
-            const row = document.getElementById('vision-row');
-            row.style.display = document.getElementById('ai-ocr-checkbox').checked ? 'block' : 'none';
+            document.getElementById('vision-row').style.display =
+                document.getElementById('ai-ocr-checkbox').checked ? 'block' : 'none';
         }
 
-        // 2. File Handling
+        // F5.1: File validation with extension fallback + 50MB check
+        const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+        const ALLOWED_EXTS = ['pdf', 'jpg', 'jpeg', 'png', 'txt'];
+        const ALLOWED_MIMES = ['application/pdf', 'image/jpeg', 'image/png', 'text/plain'];
+
         dropZone.addEventListener('click', () => fileInput.click());
-        dropZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            dropZone.classList.add('dragover');
-        });
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
         dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
         dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('dragover');
+            e.preventDefault(); dropZone.classList.remove('dragover');
             if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
         });
-        fileInput.addEventListener('change', (e) => {
-            if (fileInput.files.length) handleFile(fileInput.files[0]);
-        });
+        fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
 
         function handleFile(file) {
-            const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png'];
-            if (!allowedTypes.includes(file.type)) {
-                alert('Please upload a PDF or image file (JPG/PNG).');
+            const ext = file.name.split('.').pop().toLowerCase();
+            const mimeOk = file.type ? ALLOWED_MIMES.includes(file.type) : ALLOWED_EXTS.includes(ext);
+            if (!mimeOk && !ALLOWED_EXTS.includes(ext)) {
+                showError('Please upload a PDF, image (JPG/PNG), or TXT file.');
                 return;
             }
+            if (file.size > MAX_UPLOAD_BYTES) {
+                showError('File too large. Maximum size is 50 MB.');
+                return;
+            }
+            hideError();
             selectedFile = file;
             fileNameDisplay.textContent = `Selected: ${file.name}`;
             fileNameDisplay.style.display = 'block';
             startBtn.disabled = false;
         }
 
-        // 3. Start Process
+        // F5.6: choose_folder with fallback to default output folder
+        async function chooseFolder() {
+            try {
+                const res = await fetch('/choose_folder');
+                const data = await res.json();
+                if (!res.ok || data.error || data.detail) {
+                    const msg = data.error || data.detail || 'Folder selection failed';
+                    if (msg === 'Selection cancelled') {
+                        return await offerDefaultFolder('Folder selection was cancelled.');
+                    }
+                    return await offerDefaultFolder(`Folder picker error: ${msg}`);
+                }
+                return data.path;
+            } catch (e) {
+                return await offerDefaultFolder('Folder picker unavailable.');
+            }
+        }
+
+        function offerDefaultFolder(reason) {
+            return new Promise((resolve) => {
+                _pendingFolderResolve = resolve;
+                showError(
+                    `${reason} Use the default output folder, or dismiss to cancel.`,
+                    false,
+                    true,
+                );
+                // "Dismiss" cancels the whole flow
+                const origDismiss = document.getElementById('error-dismiss-btn').onclick;
+                document.getElementById('error-dismiss-btn').onclick = () => {
+                    hideError();
+                    _pendingFolderResolve = null;
+                    document.getElementById('error-dismiss-btn').onclick = origDismiss;
+                    resolve('__CANCELLED__');
+                };
+            });
+        }
+
+        // F5.10: Cancel button
+        document.getElementById('cancel-btn').addEventListener('click', async () => {
+            if (!jobId) return;
+            try {
+                await fetch(`/cancel/${jobId}`, { method: 'POST' });
+                if (activeInterval) { clearInterval(activeInterval); activeInterval = null; }
+                document.getElementById('progress-section').style.display = 'none';
+                document.getElementById('upload-section').style.display = 'block';
+                showError('Job cancelled.');
+            } catch (e) {
+                console.error('Cancel failed:', e);
+            }
+        });
+
+        // Start Process
         startBtn.addEventListener('click', async () => {
             if (!selectedFile) return;
-
+            hideError();
             startBtn.disabled = true;
             startBtn.textContent = 'Uploading...';
 
@@ -513,102 +599,117 @@
                 formData.append('file', selectedFile);
                 const uploadRes = await fetch('/upload', { method: 'POST', body: formData });
                 const uploadData = await uploadRes.json();
+                if (!uploadRes.ok) throw new Error(uploadData.detail || 'Upload failed');
 
-                if (!uploadRes.ok) {
-                    throw new Error(uploadData.detail || "Upload failed");
-                }
-
-                // Step 2: Ask user where to save
+                // Step 2: F5.6 folder picker with fallback
                 startBtn.textContent = 'Choose save location...';
-                const promptText = currentMode === 'translator' ? 'Choose where to save the translation' : 'Choose where to save the converted file';
-                const folderRes = await fetch(`/choose_folder?prompt=${encodeURIComponent(promptText)}`);
-                const folderData = await folderRes.json();
-
-                if (!folderRes.ok || folderData.error || folderData.detail) {
-                    const msg = folderData.error || folderData.detail || "Folder selection failed";
-                    if (msg !== "Selection cancelled") alert(msg);
+                const outputPath = await chooseFolder();
+                if (outputPath === '__CANCELLED__') {
                     startBtn.disabled = false;
-                    startBtn.textContent = currentMode === 'translator' ? 'Translate' : 'Convert';
+                    startBtn.textContent = getBtnLabel();
                     return;
                 }
 
-
-                const outputPath = folderData.path;
                 startBtn.textContent = 'Starting...';
 
-                // Step 3: Start Job
-                let query = "";
-
+                // Step 3: Start job
+                let url, params;
                 if (currentMode === 'translator') {
                     const visionModel = document.getElementById('ai-ocr-checkbox').checked
-                        ? document.getElementById('vision-model').value
-                        : 'glm-ocr:latest';
+                        ? document.getElementById('vision-model').value : 'glm-ocr:latest';
                     const translateModel = document.getElementById('translate-model').value;
                     const lang = document.getElementById('lang-select').value;
+                    const sourceLang = document.getElementById('source-lang-select').value; // F5.9
                     const useAiOcr = document.getElementById('ai-ocr-checkbox').checked;
-                    query = `/process?filename=${encodeURIComponent(uploadData.filename)}&saved_path=${encodeURIComponent(uploadData.saved_path)}&lang=${encodeURIComponent(lang)}&model=${encodeURIComponent(translateModel)}&vision_model=${encodeURIComponent(visionModel)}&output_path=${encodeURIComponent(outputPath)}&use_ai_ocr=${useAiOcr}`;
+                    params = new URLSearchParams({
+                        filename: uploadData.filename,
+                        saved_path: uploadData.saved_path,
+                        lang,
+                        model: translateModel,
+                        vision_model: visionModel,
+                        use_ai_ocr: useAiOcr,
+                        source_lang: sourceLang, // F5.9
+                    });
+                    if (outputPath) params.append('output_path', outputPath);
+                    url = `/process?${params}`;
                 } else {
                     const size = document.getElementById('size-input').value + document.getElementById('size-unit').value;
                     const format = document.getElementById('format-select').value;
-                    query = `/convert?filename=${encodeURIComponent(uploadData.filename)}&saved_path=${encodeURIComponent(uploadData.saved_path)}&target_size=${encodeURIComponent(size)}&output_format=${encodeURIComponent(format)}&output_path=${encodeURIComponent(outputPath)}`;
+                    params = new URLSearchParams({
+                        filename: uploadData.filename,
+                        saved_path: uploadData.saved_path,
+                        target_size: size,
+                        output_format: format,
+                    });
+                    if (outputPath) params.append('output_path', outputPath);
+                    url = `/convert?${params}`;
                 }
 
-                const processRes = await fetch(query, { method: 'POST' });
+                const processRes = await fetch(url, { method: 'POST' });
                 const processData = await processRes.json();
-
                 if (!processRes.ok) {
-                    const errDetail = processData.detail || processData.message || 'An error occurred.';
-                    alert(errDetail);
+                    showError(processData.detail || processData.message || 'An error occurred.', true);
                     startBtn.disabled = false;
-                    startBtn.textContent = currentMode === 'translator' ? 'Start Translation' : 'Start Conversion';
+                    startBtn.textContent = getBtnLabel();
                     return;
                 }
 
                 jobId = processData.job_id;
-
-                // Switch UI
                 document.getElementById('upload-section').style.display = 'none';
                 document.getElementById('progress-section').classList.add('active');
-                document.getElementById('progress-section').style.display = 'block'; // Ensure visible
-
-                // Poll Status
+                document.getElementById('progress-section').style.display = 'block';
                 pollStatus();
 
             } catch (e) {
                 console.error(e);
-                alert('Error starting process: ' + e);
+                showError('Error starting process: ' + e, true);
                 startBtn.disabled = false;
-                startBtn.textContent = currentMode === 'translator' ? 'Translate' : 'Convert';
+                startBtn.textContent = getBtnLabel();
             }
         });
 
-        // 4. Poll Status
-        async function pollStatus() {
+        // F5.4: Poll with failure limit + undefined progress guard
+        function pollStatus() {
             if (!jobId) return;
+            let failureCount = 0;
+            const MAX_FAILURES = 5;
 
-            const interval = setInterval(async () => {
+            activeInterval = setInterval(async () => {
                 try {
                     const res = await fetch(`/status/${jobId}`);
+                    if (res.status === 404) {
+                        clearInterval(activeInterval); activeInterval = null;
+                        showError('Job lost — server may have restarted.');
+                        return;
+                    }
+                    if (!res.ok) {
+                        if (++failureCount >= MAX_FAILURES) {
+                            clearInterval(activeInterval); activeInterval = null;
+                            showError('Lost connection to server. Please retry.', true);
+                        }
+                        return;
+                    }
+                    failureCount = 0;
                     const data = await res.json();
 
-                    // Update UI
-                    const fill = document.getElementById('progress-fill');
-                    const text = document.getElementById('status-text');
-
-                    fill.style.width = `${data.progress}%`;
-                    text.textContent = data.message;
+                    document.getElementById('progress-fill').style.width = `${data.progress ?? 0}%`;
+                    document.getElementById('status-text').textContent = data.message;
 
                     if (data.status === 'completed') {
-                        clearInterval(interval);
+                        clearInterval(activeInterval); activeInterval = null;
                         showResult(data);
                     } else if (data.status === 'failed') {
-                        clearInterval(interval);
-                        alert('Failed: ' + data.message);
-                        location.reload();
+                        clearInterval(activeInterval); activeInterval = null;
+                        showError('Processing failed: ' + (data.message || 'Unknown error'), true);
+                    } else if (data.status === 'cancelled') {
+                        clearInterval(activeInterval); activeInterval = null;
+                        showError('Job was cancelled.');
                     }
-
                 } catch (e) {
-                    console.error("Polling error", e);
+                    if (++failureCount >= MAX_FAILURES) {
+                        clearInterval(activeInterval); activeInterval = null;
+                        showError('Lost connection to server. Please retry.', true);
+                    }
                 }
             }, 1000);
         }
@@ -620,26 +721,18 @@
             resDiv.style.display = 'block';
 
             const linkBtn = document.getElementById('result-link');
-            const finderBtn = document.getElementById('finder-btn');
-
             if (currentMode === 'translator') {
                 linkBtn.textContent = "View Report In Browser";
                 document.getElementById('result-desc').textContent = "Your document has been translated.";
             } else {
                 linkBtn.textContent = "Download / View File";
-                let desc = "Conversion Complete. ";
-                if (data.stats) {
-                    desc += `Reduced to ${data.stats.compressed} (${data.stats.reduction})`;
-                }
+                let desc = "Conversion Complete.";
+                if (data.stats) desc += ` Reduced to ${data.stats.compressed} (${data.stats.reduction})`;
                 document.getElementById('result-desc').textContent = desc;
             }
-
             linkBtn.href = data.result_url;
-
-            finderBtn.onclick = () => {
-                if (jobId) {
-                    fetch(`/open_output_folder/${jobId}`, { method: 'POST' });
-                }
+            document.getElementById('finder-btn').onclick = () => {
+                if (jobId) fetch(`/open_output_folder/${jobId}`, { method: 'POST' });
             };
         }
     </script>

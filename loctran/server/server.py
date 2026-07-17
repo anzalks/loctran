@@ -70,6 +70,28 @@ def _sanitize_filename(name: str) -> str:
     return safe or "upload"
 
 
+# F5.5: module-level keyword sets shared by endpoint validation and role filter
+_VISION_KEYWORDS: tuple[str, ...] = (
+    "vision",
+    "llava",
+    "moondream",
+    "glm-ocr",
+    "clip",
+    "pixtral",
+    "minicpm-v",
+    "phi4",
+)
+_TRANSLATE_KEYWORDS: tuple[str, ...] = (
+    "gemma",
+    "qwen",
+    "llama",
+    "mistral",
+    "hunyuan",
+    "phi",
+    "deepseek",
+)
+
+
 # Add paths for local modules
 sys.path.append(str(BASE_DIR))
 sys.path.append(str(Path(__file__).parent))
@@ -152,6 +174,7 @@ def run_pipeline(
     output_root: Path = OUTPUT_DIR,
     use_ai_ocr: bool = False,
     vision_model: str = "glm-ocr:latest",
+    source_lang: str = "auto",  # F5.9
 ):
     """Background task to run extraction and translation."""
     # F4.5: Acquire concurrency slot; check cancel before heavy work
@@ -171,6 +194,13 @@ def run_pipeline(
                     jobs[job_id]["progress"] = percent
                     upsert_job(jobs[job_id])
 
+            # F5.3: monotonic progress — extraction 0-50, translation 50-100
+            def _ext_progress(msg, pct):
+                update_progress(msg, int(pct / 2))
+
+            def _trans_progress(msg, pct):
+                update_progress(msg, 50 + int(pct / 2))
+
             jobs[job_id]["status"] = JobStatus.EXTRACTING
             update_progress("Starting extraction...", 0)
             logger.info(f"Job {job_id}: Started extraction for {file_path.name}")
@@ -181,10 +211,11 @@ def run_pipeline(
             doc_dir = process_file(
                 file_path,
                 output_root,
-                progress_callback=update_progress,
+                progress_callback=_ext_progress,
                 folder_name=folder_name,
                 use_ai_ocr=use_ai_ocr,
                 vision_model=vision_model,
+                source_lang=source_lang,  # F5.9
             )
 
             if not doc_dir:
@@ -202,7 +233,7 @@ def run_pipeline(
             jobs[job_id]["status"] = JobStatus.TRANSLATING
             update_progress("Starting translation...", 50)
 
-            process_folder(doc_dir, lang, model, progress_callback=update_progress)
+            process_folder(doc_dir, lang, model, progress_callback=_trans_progress)
 
             update_progress("All done!", 100)
             jobs[job_id]["status"] = JobStatus.COMPLETED
@@ -575,11 +606,12 @@ app.add_middleware(
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
+    # F5.8: removed Google Fonts hosts (fonts are now system/bundled)
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         "img-src 'self' data:; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src 'self' https://fonts.gstatic.com; "
+        "style-src 'self' 'unsafe-inline'; "
+        "font-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
         "connect-src 'self' ws: wss:;"
     )
@@ -742,6 +774,7 @@ def start_process(
     output_path: Optional[str] = None,
     use_ai_ocr: bool = False,
     vision_model: str = "glm-ocr:latest",
+    source_lang: str = "auto",  # F5.9
 ):
     """Start the translation pipeline."""
     job_id = str(uuid.uuid4())
@@ -750,17 +783,7 @@ def start_process(
     if not Path(saved_path).exists():
         raise HTTPException(400, "Source file not found")
 
-    # --- Vision model validation ---
-    _VISION_KEYWORDS = (
-        "vision",
-        "llava",
-        "moondream",
-        "glm-ocr",
-        "clip",
-        "pixtral",
-        "minicpm-v",
-        "phi4",
-    )
+    # Vision model validation
     vision_name_lower = vision_model.lower()
     _vision_ok = any(kw in vision_name_lower for kw in _VISION_KEYWORDS)
     if not _vision_ok:
@@ -775,19 +798,13 @@ def start_process(
     if not _vision_ok:
         raise HTTPException(
             status_code=400,
-            detail="OCR engine must be a vision model. Please select a valid vision model.",
+            detail=(
+                "OCR engine must be a vision model."
+                " Please select a valid vision model."
+            ),
         )
 
     # F4.11: Translation model keyword mismatch is a warning, not a hard block
-    _TRANSLATE_KEYWORDS = (
-        "gemma",
-        "qwen",
-        "llama",
-        "mistral",
-        "hunyuan",
-        "phi",
-        "deepseek",
-    )
     if not any(kw in model.lower() for kw in _TRANSLATE_KEYWORDS):
         logger.warning(
             "Model %r does not match known translation keywords — proceeding anyway",
@@ -834,6 +851,7 @@ def start_process(
         output_root,
         use_ai_ocr,
         vision_model,
+        source_lang,  # F5.9
     )
 
     logger.info(f"Queued translation job {job_id} for {filename}")
@@ -930,17 +948,25 @@ def get_models():
 
 
 @app.get("/api/models")
-def get_all_models():
-    """Return all locally available Ollama models."""
+def get_all_models(role: Optional[str] = None):
+    """Return locally available Ollama models, optionally filtered by role.
+
+    role=vision      → only vision/OCR models
+    role=translation → exclude vision models (F5.5)
+    """
     import ollama as _ollama
 
     try:
         result = _ollama.list()
-        # SDK returns a ListResponse with a .models attribute (list of Model objects)
-        # Each Model object has a .model attribute (the tag string, e.g. 'translategemma:4b')
         models = result.models if hasattr(result, "models") else list(result)
-        names = [{"name": m.model} for m in models if getattr(m, "model", None)]
-        return {"models": names}
+        all_names = [m.model for m in models if getattr(m, "model", None)]
+        if role == "vision":
+            names = [n for n in all_names if any(kw in n.lower() for kw in _VISION_KEYWORDS)]
+        elif role == "translation":
+            names = [n for n in all_names if not any(kw in n.lower() for kw in _VISION_KEYWORDS)]
+        else:
+            names = all_names
+        return {"models": [{"name": n} for n in names]}
     except Exception as e:
         logger.error(f"Failed to list Ollama models: {e}")
         return {"models": []}
