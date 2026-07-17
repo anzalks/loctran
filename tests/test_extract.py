@@ -379,7 +379,12 @@ class TestColumnGapSplitsSegments:
             segs.append({"text": text, "bbox": [0, 0, 30, 12], "method": "OCR"})
 
         fake_pytess = MagicMock()
-        fake_pytess.image_to_data.side_effect = [fake_data_normal, empty_data]
+        # 3 responses: normal pass, PSM-11 sparse pass, inverted pass
+        fake_pytess.image_to_data.side_effect = [
+            fake_data_normal,
+            empty_data,
+            empty_data,
+        ]
         fake_pytess.Output.DICT = "dict"
 
         with (
@@ -394,7 +399,6 @@ class TestColumnGapSplitsSegments:
         ):
             segs = ext.get_segments_hybrid("dummy.jpg", use_ai=False)
 
-        assert len(segs) >= 2
         assert len(segs) >= 2
 
 
@@ -590,11 +594,13 @@ class TestHybridAndProcessPageCoverage:
 
         fake_tesseract = MagicMock()
         fake_tesseract.Output.DICT = "dict"
-        fake_tesseract.image_to_data.side_effect = [fake_data, empty_data]
+        # 3 responses: normal pass, PSM-11 sparse pass, inverted pass
+        fake_tesseract.image_to_data.side_effect = [fake_data, empty_data, empty_data]
 
         with (
             patch(
-                "loctran.extract._configure_tesseract_path", return_value=fake_tesseract
+                "loctran.extract._configure_tesseract_path",
+                return_value=fake_tesseract,
             ),
             patch("loctran.extract._get_pillow_image", return_value=Image),
         ):
@@ -616,10 +622,12 @@ class TestHybridAndProcessPageCoverage:
             "loctran.extract.get_segments_hybrid", return_value=fake_segments
         ) as mocked:
             result = ext.process_page(
-                ("dummy.pdf", str(image_path), 0, True, True, None)
+                ("dummy.pdf", str(image_path), 0, True, True, None, "auto")
             )
 
-        mocked.assert_called_once_with(str(image_path), use_ai=True, vision_model=None)
+        mocked.assert_called_once_with(
+            str(image_path), use_ai=True, vision_model=None, source_lang="auto"
+        )
         assert result is not None
         assert result["segments"] == fake_segments
         assert "translated" in result["full_text"]
@@ -800,9 +808,9 @@ class TestOcrWithOllama:
     def test_returns_text_on_success(self):
         import loctran.extract as ext
 
-        mock_ollama = MagicMock()
-        mock_ollama.chat.return_value = {"message": {"content": "Hello World"}}
-        with patch("loctran.extract._get_ollama", return_value=mock_ollama):
+        mock_client = MagicMock()
+        mock_client.chat.return_value = {"message": {"content": "Hello World"}}
+        with patch("loctran.extract._get_ollama_client", return_value=mock_client):
             result = ext.ocr_with_ollama("dummy.jpg")
         assert result == "Hello World"
 
@@ -810,7 +818,8 @@ class TestOcrWithOllama:
         import loctran.extract as ext
 
         with patch(
-            "loctran.extract._get_ollama", side_effect=RuntimeError("no ollama")
+            "loctran.extract._get_ollama_client",
+            side_effect=RuntimeError("no ollama"),
         ):
             result = ext.ocr_with_ollama("dummy.jpg")
         assert result is None
@@ -819,9 +828,9 @@ class TestOcrWithOllama:
         """Text that matches the noise regex should return empty string."""
         import loctran.extract as ext
 
-        mock_ollama = MagicMock()
-        mock_ollama.chat.return_value = {"message": {"content": "|||"}}
-        with patch("loctran.extract._get_ollama", return_value=mock_ollama):
+        mock_client = MagicMock()
+        mock_client.chat.return_value = {"message": {"content": "|||"}}
+        with patch("loctran.extract._get_ollama_client", return_value=mock_client):
             result = ext.ocr_with_ollama("dummy.jpg")
         assert result == ""
 
