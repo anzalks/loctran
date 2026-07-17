@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import html as _html
 import json
 import logging
 import os
@@ -361,195 +362,230 @@ def process_folder(
             progress_callback(f"Error: {msg}", 0)
         raise TranslationError(msg)
 
-    with open(json_path) as f:
+    with open(json_path, encoding="utf-8") as f:
         data = json.load(f)
 
     logger.info(
         f"Starting translation of {len(data)} slides → lang='{lang}', model='{model}'"
     )
 
-    # Start HTML — include text-only styles alongside the overlay styles
-    with open(html_path, "w") as f:
-        f.write("""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <style>
-                * { box-sizing: border-box; }
-                body {
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-                    padding: 24px;
-                    background: #f5f7fa;
-                    color: #1a1a2e;
-                    line-height: 1.5;
-                }
-                h1 {
-                    font-size: 1.5rem;
-                    font-weight: 600;
-                    color: #2d3748;
-                    margin-bottom: 24px;
-                }
-                .row {
-                    display: flex;
-                    gap: 24px;
-                    margin-bottom: 32px;
-                    background: white;
-                    padding: 20px;
-                    border-radius: 10px;
-                    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
-                }
-                .col { flex: 1; min-width: 0; }
-                .col h3 {
-                    font-size: 0.85rem;
-                    font-weight: 600;
-                    color: #718096;
-                    text-transform: uppercase;
-                    letter-spacing: 0.03em;
-                    margin: 0 0 12px 0;
-                }
-                .col-left { border-right: 1px solid #e2e8f0; padding-right: 20px; }
-                .col:last-child { padding-left: 4px; }
-                img { max-width: 100%; border-radius: 4px; }
-                .translated-box:hover {
-                    z-index: 100 !important;
-                    overflow: visible !important;
-                    height: auto !important;
-                    background: #fffff0 !important;
-                    outline: 2px solid #4299e1 !important;
-                    border-radius: 2px;
-                }
-                .text-original {
-                    color: #2d3748;
-                    font-size: 0.95rem;
-                    line-height: 1.75;
-                    white-space: pre-wrap;
-                }
-                .text-translated {
-                    color: #1a365d;
-                    font-size: 0.95rem;
-                    line-height: 1.75;
-                    white-space: pre-wrap;
-                    background: #ebf8ff;
-                    padding: 12px;
-                    border-radius: 6px;
-                    border-left: 3px solid #4299e1;
-                }
-                .text-missing { color: #a0aec0; font-style: italic; }
-                @media (max-width: 900px) {
-                    .row { flex-direction: column; }
-                    .col-left { border-right: none; border-bottom: 1px solid #e2e8f0; padding-right: 0; padding-bottom: 16px; }
-                }
-            </style>
-        </head>
-        <body>
-        <h1>Translation Report</h1>
-        """)
+    # F2.10: write with explicit utf-8; F2.11: lang + viewport; F2.9: print CSS + lazy JS
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(
+            "<!DOCTYPE html>\n"
+            '<html lang="en">\n'
+            "<head>\n"
+            '  <meta charset="utf-8">\n'
+            '  <meta name="viewport" content="width=device-width, initial-scale=1">\n'
+            "  <title>Translation Report</title>\n"
+            "  <style>\n"
+            "    * { box-sizing: border-box; }\n"
+            "    body {\n"
+            "      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,\n"
+            "        'Noto Sans', 'Hiragino Sans', 'Yu Gothic', 'Nirmala UI',\n"
+            "        'Geeza Pro', 'Helvetica Neue', sans-serif;\n"
+            "      padding: 24px; background: #f5f7fa;\n"
+            "      color: #1a1a2e; line-height: 1.5;\n"
+            "    }\n"
+            "    h1 { font-size:1.5rem; font-weight:600; color:#2d3748; margin-bottom:24px; }\n"
+            "    .row {\n"
+            "      display:flex; gap:24px; margin-bottom:32px; background:white;\n"
+            "      padding:20px; border-radius:10px;\n"
+            "      box-shadow:0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);\n"
+            "    }\n"
+            "    .col { flex:1; min-width:0; }\n"
+            "    .col h3 {\n"
+            "      font-size:0.85rem; font-weight:600; color:#718096;\n"
+            "      text-transform:uppercase; letter-spacing:0.03em; margin:0 0 12px 0;\n"
+            "    }\n"
+            "    .col-left { border-right:1px solid #e2e8f0; padding-right:20px; }\n"
+            "    .col:last-child { padding-left:4px; }\n"
+            "    img { max-width:100%; border-radius:4px; }\n"
+            "    .translated-box:hover {\n"
+            "      z-index:100 !important; overflow:visible !important;\n"
+            "      height:auto !important; background:#fffff0 !important;\n"
+            "      outline:2px solid #4299e1 !important; border-radius:2px;\n"
+            "    }\n"
+            "    .text-original {\n"
+            "      color:#2d3748; font-size:0.95rem; line-height:1.75; white-space:pre-wrap;\n"
+            "    }\n"
+            "    .text-translated {\n"
+            "      color:#1a365d; font-size:0.95rem; line-height:1.75; white-space:pre-wrap;\n"
+            "      background:#ebf8ff; padding:12px; border-radius:6px;\n"
+            "      border-left:3px solid #4299e1;\n"
+            "    }\n"
+            "    .text-missing { color:#a0aec0; font-style:italic; }\n"
+            "    .untranslated-note { font-size:0.8rem; color:#c05621; margin-top:4px; }\n"
+            "    @media (max-width: 900px) {\n"
+            "      .row { flex-direction:column; }\n"
+            "      .col-left {\n"
+            "        border-right:none; border-bottom:1px solid #e2e8f0;\n"
+            "        padding-right:0; padding-bottom:16px;\n"
+            "      }\n"
+            "    }\n"
+            "    @media print {\n"
+            "      .translated-box {\n"
+            "        white-space:normal !important; overflow:visible !important;\n"
+            "        height:auto !important;\n"
+            "      }\n"
+            "      .overlay-container { break-inside:avoid; }\n"
+            "    }\n"
+            "  </style>\n"
+            "  <script>\n"
+            "    document.addEventListener('DOMContentLoaded', function () {\n"
+            "      document.querySelectorAll('.translated-box').forEach(function (box) {\n"
+            "        var s = parseFloat(getComputedStyle(box).fontSize);\n"
+            "        while (box.scrollWidth > box.clientWidth && s > 4) {\n"
+            "          s -= 0.5;\n"
+            "          box.style.fontSize = s + 'px';\n"
+            "        }\n"
+            "      });\n"
+            "    });\n"
+            "  </script>\n"
+            "</head>\n"
+            "<body>\n"
+            "<h1>Translation Report</h1>\n"
+        )
 
-    # Process
+    # Process — F2.10: try/finally ensures </body></html> even on mid-run crash
     total = len(data)
-    with open(html_path, "a") as f:
-        for i, slide in enumerate(data):
-            slide_num = slide["slide_num"]
-            segments = slide.get("segments", [])
-            img_path = slide["image_path"]
+    _aborted = False
+    with open(html_path, "a", encoding="utf-8") as f:
+        try:
+            for i, slide in enumerate(data):
+                slide_num = slide["slide_num"]
+                segments = slide.get("segments", [])
+                img_path = slide["image_path"]
 
-            # ── TEXT-ONLY slide (no image, e.g. from a .txt file) ──────────────
-            if not img_path:
-                segments_to_trans = [s for s in segments if s.get("text", "").strip()]
-                if not segments_to_trans:
+                # ── TEXT-ONLY slide (no image, e.g. from a .txt file) ──────────
+                if not img_path:
+                    segments_to_trans = [
+                        s for s in segments if s.get("text", "").strip()
+                    ]
+                    if not segments_to_trans:
+                        continue
+                    translations = translate_segments(
+                        segments_to_trans, model, lang, batch_size=batch_size
+                    )
+                    for idx, s in enumerate(segments_to_trans):
+                        s["translation"] = translations.get(idx, "")
+
+                    # F2.1: escape user content before inserting into HTML
+                    original_text = "\n\n".join(
+                        _html.escape(s["text"]) for s in segments_to_trans
+                    )
+                    translated_text = "\n\n".join(
+                        _html.escape(s["translation"])
+                        if s.get("translation")
+                        else f"[untranslated: {_html.escape(s['text'][:40])}…]"
+                        for s in segments_to_trans
+                    )
+                    translated_cls = (
+                        "text-translated"
+                        if any(s.get("translation") for s in segments_to_trans)
+                        else "text-missing"
+                    )
+                    # F2.8: count of untranslated segments
+                    n_untrans = sum(
+                        1 for s in segments_to_trans if not s.get("translation")
+                    )
+                    untrans_note = (
+                        f'<p class="untranslated-note">'
+                        f"{n_untrans} segment{'s' if n_untrans != 1 else ''}"
+                        f" untranslated</p>"
+                        if n_untrans > 0
+                        else ""
+                    )
+
+                    # F2.6: dir="auto" on text columns
+                    f.write(
+                        '<div class="row">'
+                        '<div class="col col-left">'
+                        f"<h3>Paragraph {slide_num}</h3>"
+                        f'<p class="text-original" dir="auto">{original_text}</p>'
+                        "</div>"
+                        '<div class="col col-right">'
+                        "<h3>Translation</h3>"
+                        f'<p class="{translated_cls}" dir="auto">{translated_text}</p>'
+                        f"{untrans_note}"
+                        "</div>"
+                        "</div>\n"
+                    )
+                    if progress_callback:
+                        progress_callback(
+                            f"Processed paragraph {slide_num}",
+                            int((i + 1) / total * 100),
+                        )
                     continue
-                translations = translate_segments(
-                    segments_to_trans, model, lang, batch_size=batch_size
-                )
+
+                # ── IMAGE slide (PDF / image file) ──────────────────────────────
+                # F2.1: escape rel_img for safe HTML attribute insertion
+                rel_img = f"images/{Path(img_path).name}"
+                safe_rel_img = _html.escape(rel_img, quote=True)
+
+                # Translate meaningful segments
+                segments_to_trans = [s for s in segments if len(s["text"]) > 2]
+
+                if not segments_to_trans:
+                    logger.debug(
+                        f"Slide {slide_num}: no translatable segments,"
+                        " skipping translation call."
+                    )
+                    translations = {}
+                else:
+                    translations = translate_segments(
+                        segments_to_trans, model, lang, batch_size=batch_size
+                    )
+                    if not translations:
+                        logger.warning(
+                            f"Slide {slide_num}: translate_segments returned empty"
+                            f" results for {len(segments_to_trans)} segments —"
+                            " overlay will show original image only."
+                        )
+
                 for idx, s in enumerate(segments_to_trans):
                     s["translation"] = translations.get(idx, "")
 
-                original_text = "\n\n".join(s["text"] for s in segments_to_trans)
-                translated_text = "\n\n".join(
-                    (
-                        s["translation"]
-                        if s.get("translation")
-                        else f"[untranslated: {s['text'][:40]}…]"
-                    )
-                    for s in segments_to_trans
-                )
-                translated_cls = (
-                    "text-translated"
-                    if any(s.get("translation") for s in segments_to_trans)
-                    else "text-missing"
+                with Image.open(img_path) as img:
+                    w, h = img.size
+
+                # F2.7: pass img_path so overlay can sample background colour
+                overlay_html = get_overlay_html(
+                    w, h, rel_img, segments_to_trans, img_path=img_path
                 )
 
-                f.write(f"""
-            <div class="row">
-                <div class="col col-left">
-                    <h3>Paragraph {slide_num}</h3>
-                    <p class="text-original">{original_text}</p>
-                </div>
-                <div class="col col-right">
-                    <h3>Translation</h3>
-                    <p class="{translated_cls}">{translated_text}</p>
-                </div>
-            </div>
-            """)
+                # F2.9: loading="lazy" on original image
+                f.write(
+                    '<div class="row">'
+                    '<div class="col col-left">'
+                    f"<h3>Original (Slide {slide_num})</h3>"
+                    f'<img src="{safe_rel_img}" loading="lazy">'
+                    "</div>"
+                    '<div class="col col-right">'
+                    "<h3>Translated Overlay</h3>"
+                    f"{overlay_html}"
+                    "</div>"
+                    "</div>\n"
+                )
+
                 if progress_callback:
                     progress_callback(
-                        f"Processed paragraph {slide_num}", int((i + 1) / total * 100)
-                    )
-                continue
-
-            # ── IMAGE slide (PDF / image file) ─────────────────────────────────
-            rel_img = f"images/{Path(img_path).name}"
-
-            # Translate meaningful segments
-            segments_to_trans = [s for s in segments if len(s["text"]) > 2]
-
-            if not segments_to_trans:
-                logger.debug(
-                    f"Slide {slide_num}: no translatable segments, skipping translation call."
-                )
-                translations = {}
-            else:
-                translations = translate_segments(
-                    segments_to_trans, model, lang, batch_size=batch_size
-                )
-                if not translations:
-                    logger.warning(
-                        f"Slide {slide_num}: translate_segments returned empty results for "
-                        f"{len(segments_to_trans)} segments — overlay will show original image only."
+                        f"Processed slide {slide_num}",
+                        int((i + 1) / total * 100),
                     )
 
-            # Update segments with translation
-            for idx, s in enumerate(segments_to_trans):
-                s["translation"] = translations.get(idx, "")
-
-            # Get Image Dims (for percentage calc)
-            with Image.open(img_path) as img:
-                w, h = img.size
-
-            # Generate Overlay HTML
-            overlay_html = get_overlay_html(w, h, rel_img, segments_to_trans)
-
-            # Append to Report
-            f.write(f"""
-            <div class="row">
-                <div class="col col-left">
-                    <h3>Original (Slide {slide_num})</h3>
-                    <img src="{rel_img}">
-                </div>
-                <div class="col col-right">
-                    <h3>Translated Overlay</h3>
-                    {overlay_html}
-                </div>
-            </div>
-            """)
-
-            if progress_callback:
-                progress_callback(
-                    f"Processed slide {slide_num}", int((i + 1) / total * 100)
+        except Exception as exc:
+            _aborted = True
+            logger.error(f"Report aborted mid-run: {exc}")
+            raise
+        finally:
+            if _aborted:
+                f.write(
+                    '<p style="color:red;text-align:center;padding:12px">'
+                    "&#9888; Report was interrupted — output may be incomplete."
+                    "</p>\n"
                 )
-
-        f.write("</body></html>")
+            f.write("</body></html>\n")
 
 
 def main() -> None:

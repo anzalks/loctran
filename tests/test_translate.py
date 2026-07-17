@@ -342,13 +342,24 @@ class TestGetOverlayHtml:
         assert "Bonjour" in html
         assert "translated-box" in html
 
-    def test_segment_without_translation_skipped(self):
+    def test_segment_without_translation_rendered_as_untranslated(self):
+        """F2.8: untranslated segments must be rendered with dashed outline."""
         from loctran.translate import get_overlay_html
 
         seg = {"bbox": [10, 20, 100, 40], "text": "Hello"}
         html = get_overlay_html(800, 600, "images/page_1.png", [seg])
-        # No translated box should appear
-        assert "translated-box" not in html
+        # Must be rendered (not silently skipped), original text visible
+        assert "translated-box" in html
+        assert "Hello" in html
+        assert "dashed" in html  # F2.8 dashed-outline style
+
+    def test_untranslated_note_in_overlay(self):
+        """F2.8: per-page untranslated count note."""
+        from loctran.translate import get_overlay_html
+
+        seg = {"bbox": [10, 20, 100, 40], "text": "Hello"}
+        html = get_overlay_html(800, 600, "images/page_1.png", [seg])
+        assert "untranslated" in html
 
     def test_zero_height_handled(self):
         from loctran.translate import get_overlay_html
@@ -367,6 +378,83 @@ class TestGetOverlayHtml:
         }
         html = get_overlay_html(800, 600, "images/page_1.png", [seg])
         assert "Bonjour" in html
+
+    def test_html_escaping_title_and_body(self):
+        """F2.1: XSS characters must be escaped in title and translation body."""
+        from loctran.translate import get_overlay_html
+
+        seg = {
+            "bbox": [0, 0, 100, 20],
+            "text": '<script>alert("xss")</script>',
+            "translation": "<b>bold & safe</b>",
+        }
+        html = get_overlay_html(800, 600, "img.png", [seg])
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
+        assert "&lt;b&gt;" in html
+        assert "&amp;" in html
+
+    def test_dir_auto_on_translated_box(self):
+        """F2.6: each box must have dir=auto for RTL support."""
+        from loctran.translate import get_overlay_html
+
+        seg = {"bbox": [0, 0, 100, 20], "text": "Hi", "translation": "مرحبا"}
+        html = get_overlay_html(800, 600, "img.png", [seg])
+        assert 'dir="auto"' in html
+
+    def test_lazy_loading_on_overlay_img(self):
+        """F2.9: overlay <img> must have loading=lazy."""
+        from loctran.translate import get_overlay_html
+
+        html = get_overlay_html(800, 600, "images/p1.png", [])
+        assert 'loading="lazy"' in html
+
+    def test_width_based_font_size_for_long_translation(self):
+        """F2.2: very long translation must produce a smaller font than height-only."""
+        from loctran.render import get_overlay_html as _goh
+
+        short_seg = {"bbox": [0, 0, 200, 20], "text": "Hi", "translation": "Hi"}
+        long_seg = {
+            "bbox": [0, 0, 200, 20],
+            "text": "Hi",
+            "translation": "A" * 200,
+        }
+        short_html = _goh(800, 600, "p.png", [short_seg])
+        long_html = _goh(800, 600, "p.png", [long_seg])
+        # Font size value is embedded as "X.XXXXcqw"; long translation → smaller number
+        import re
+
+        def _first_font(h: str) -> float:
+            m = re.search(r"font-size:\s*([\d.]+)cqw", h)
+            return float(m.group(1)) if m else 999.0
+
+        assert _first_font(long_html) < _first_font(short_html)
+
+    def test_per_method_fudge_digital_vs_tesseract(self):
+        """F2.5: Digital segments use a larger fudge factor than Tesseract."""
+        from loctran.render import get_overlay_html as _goh
+        import re
+
+        def _first_font(h: str) -> float:
+            m = re.search(r"font-size:\s*([\d.]+)cqw", h)
+            return float(m.group(1)) if m else 0.0
+
+        tess_seg = {
+            "bbox": [0, 0, 800, 100],
+            "text": "T",
+            "translation": "T",
+            "method": "Tesseract",
+        }
+        dig_seg = {
+            "bbox": [0, 0, 800, 100],
+            "text": "T",
+            "translation": "T",
+            "method": "Digital",
+        }
+        tess_font = _first_font(_goh(800, 600, "p.png", [tess_seg]))
+        dig_font = _first_font(_goh(800, 600, "p.png", [dig_seg]))
+        # Digital fudge=0.90 > Tesseract fudge=0.85 → larger font
+        assert dig_font > tess_font
 
 
 # ---------------------------------------------------------------------------
