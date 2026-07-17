@@ -4,6 +4,7 @@ import asyncio
 import copy
 import logging
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -49,16 +50,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger("loctran")
 
-# Directories
-BASE_DIR = (
-    Path(__file__).parent.parent.parent
-)  # repo root: loctran/server/server.py → loctran/server → loctran → repo root
-UPLOAD_DIR = BASE_DIR / "uploads"
-OUTPUT_DIR = BASE_DIR / "outputs"
+# F4.13: Runtime dirs in ~/.loctran/ (not repo root / site-packages)
+BASE_DIR = Path(__file__).parent.parent.parent
+LOCTRAN_HOME = Path.home() / ".loctran"
+UPLOAD_DIR = LOCTRAN_HOME / "uploads"
+OUTPUT_DIR = LOCTRAN_HOME / "outputs"
 
-# Ensure directories exist
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# F4.6: filename sanitization
+_UNSAFE_CHARS = re.compile(r"[^a-zA-Z0-9._\-]")
+
+
+def _sanitize_filename(name: str) -> str:
+    """Return a safe basename: strip path components, replace unsafe chars."""
+    basename = Path(name).name
+    safe = _UNSAFE_CHARS.sub("_", basename)
+    return safe or "upload"
+
 
 # Add paths for local modules
 sys.path.append(str(BASE_DIR))
@@ -88,6 +98,7 @@ class JobStatus:
     COMPLETED = "completed"
     FAILED = "failed"
     COMPRESSING = "compressing"
+    CANCELLED = "cancelled"
 
 
 # In-process cache (write-through to SQLite via store.py)
@@ -96,18 +107,38 @@ jobs: Dict[str, dict] = {}
 # Lifecycle Management
 active_connections: Set[WebSocket] = set()
 DIALOG_OPEN = False
-GRACE_PERIOD = 3
+GRACE_PERIOD = 30  # F4.1: ≥30s to avoid killing active jobs
 SHUTDOWN_EVENT = threading.Event()
 JOB_RETENTION_SECONDS = 3600  # 1 Hour
 _pending_shutdown_task: asyncio.Task[None] | None = None
 _server_instance: uvicorn.Server | None = None
 _signal_handlers_installed = False
+_pull_status: dict[str, str] = {}  # F4.19: shared model pull progress
+
+# F4.5: concurrency control
+_JOB_SEMAPHORE = threading.Semaphore(2)
+_cancel_requested: set[str] = set()
 
 # Ollama Process Management
 # Track whether Ollama was pre-existing (not spawned by this app)
 ollama_was_preexisting = False
 # Track the subprocess.Popen handle if *this* app spawned Ollama
 _ollama_proc: subprocess.Popen | None = None
+
+# --- Helper Functions ---
+
+
+def _cleanup_stale_uploads(max_age_seconds: int = 86400) -> None:
+    """F4.14: Delete upload files older than max_age_seconds (default 24h)."""
+    cutoff = time.time() - max_age_seconds
+    for f in UPLOAD_DIR.iterdir():
+        try:
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                f.unlink()
+                logger.info("Removed stale upload: %s", f.name)
+        except Exception as exc:
+            logger.warning("Failed to remove stale upload %s: %s", f, exc)
+
 
 # --- Background Tasks ---
 
@@ -123,63 +154,78 @@ def run_pipeline(
     vision_model: str = "glm-ocr:latest",
 ):
     """Background task to run extraction and translation."""
-    try:
-
-        def update_progress(msg, percent):
+    # F4.5: Acquire concurrency slot; check cancel before heavy work
+    with _JOB_SEMAPHORE:
+        if job_id in _cancel_requested:
+            _cancel_requested.discard(job_id)
             if job_id in jobs:
-                jobs[job_id]["message"] = msg
-                jobs[job_id]["progress"] = percent
+                jobs[job_id]["status"] = JobStatus.CANCELLED
                 upsert_job(jobs[job_id])
+            return
 
-        jobs[job_id]["status"] = JobStatus.EXTRACTING
-        update_progress("Starting extraction...", 0)
-        logger.info(f"Job {job_id}: Started extraction for {file_path.name}")
+        try:
 
-        # 1. Extraction
-        if output_root == OUTPUT_DIR:
-            folder_name = Path(file_path).stem
-        else:
+            def update_progress(msg, percent):
+                if job_id in jobs:
+                    jobs[job_id]["message"] = msg
+                    jobs[job_id]["progress"] = percent
+                    upsert_job(jobs[job_id])
+
+            jobs[job_id]["status"] = JobStatus.EXTRACTING
+            update_progress("Starting extraction...", 0)
+            logger.info(f"Job {job_id}: Started extraction for {file_path.name}")
+
+            # F4.16: Always use original filename stem for the output folder
             folder_name = Path(original_filename).stem
 
-        doc_dir = process_file(
-            file_path,
-            output_root,
-            progress_callback=update_progress,
-            folder_name=folder_name,
-            use_ai_ocr=use_ai_ocr,
-            vision_model=vision_model,
-        )
+            doc_dir = process_file(
+                file_path,
+                output_root,
+                progress_callback=update_progress,
+                folder_name=folder_name,
+                use_ai_ocr=use_ai_ocr,
+                vision_model=vision_model,
+            )
 
-        if not doc_dir:
-            raise Exception("Extraction failed to create output directory")
+            if not doc_dir:
+                raise Exception("Extraction failed to create output directory")
 
-        jobs[job_id]["result_path"] = str(doc_dir)
+            jobs[job_id]["result_path"] = str(doc_dir)
 
-        # 2. Translation
-        jobs[job_id]["status"] = JobStatus.TRANSLATING
-        update_progress("Starting translation...", 50)
+            # F4.5: check cancel between stages
+            if job_id in _cancel_requested:
+                _cancel_requested.discard(job_id)
+                jobs[job_id]["status"] = JobStatus.CANCELLED
+                upsert_job(jobs[job_id])
+                return
 
-        process_folder(doc_dir, lang, model, progress_callback=update_progress)
+            jobs[job_id]["status"] = JobStatus.TRANSLATING
+            update_progress("Starting translation...", 50)
 
-        # 3. Complete
-        update_progress("All done!", 100)
-        jobs[job_id]["status"] = JobStatus.COMPLETED
-        jobs[job_id]["result_url"] = f"/view/{job_id}/{doc_dir.name}.html"
-        logger.info(f"Job {job_id}: Completed successfully")
+            process_folder(doc_dir, lang, model, progress_callback=update_progress)
 
-    except Exception as e:
-        logger.error(f"Job {job_id} Failed: {e}", exc_info=True)
-        if job_id in jobs:
-            jobs[job_id]["status"] = JobStatus.FAILED
-            jobs[job_id]["message"] = f"Error: {str(e)}"
-    finally:
-        # Cleanup input file
-        try:
-            if file_path.exists():
-                os.remove(file_path)
-                logger.debug(f"Cleaned up upload file: {file_path}")
+            update_progress("All done!", 100)
+            jobs[job_id]["status"] = JobStatus.COMPLETED
+            jobs[job_id]["result_url"] = f"/view/{job_id}/{doc_dir.name}.html"
+            upsert_job(jobs[job_id])
+            logger.info(f"Job {job_id}: Completed successfully")
+
         except Exception as e:
-            logger.warning(f"Failed to cleanup upload file {file_path}: {e}")
+            logger.error(f"Job {job_id} Failed: {e}", exc_info=True)
+            if job_id in jobs:
+                jobs[job_id]["status"] = JobStatus.FAILED
+                jobs[job_id]["message"] = f"Error: {str(e)}"
+                upsert_job(jobs[job_id])
+        finally:
+            _cancel_requested.discard(job_id)
+            try:
+                if file_path.exists():
+                    os.remove(file_path)
+                    logger.debug(f"Cleaned up upload file: {file_path}")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to cleanup upload file {file_path}: {e}"
+                )
 
 
 def run_conversion(
@@ -190,65 +236,76 @@ def run_conversion(
     output_format: str = "pdf",
 ):
     """Background task to run file compression/conversion."""
-    try:
-
-        def update_progress(msg, percent):
+    with _JOB_SEMAPHORE:  # F4.5
+        if job_id in _cancel_requested:
+            _cancel_requested.discard(job_id)
             if job_id in jobs:
-                jobs[job_id]["message"] = msg
-                jobs[job_id]["progress"] = percent
-
-        jobs[job_id]["status"] = JobStatus.COMPRESSING
-        update_progress("Starting conversion...", 10)
-        logger.info(f"Job {job_id}: Started conversion for {file_path.name}")
+                jobs[job_id]["status"] = JobStatus.CANCELLED
+                upsert_job(jobs[job_id])
+            return
 
         try:
-            target_size = parse_size(target_size_str)
-        except ValueError as e:
-            raise Exception(f"Invalid target size: {e}")
 
-        # Determine Output Filename
-        input_stem = file_path.stem
-        if not output_format.startswith("."):
-            output_format = f".{output_format}"
+            def update_progress(msg, percent):
+                if job_id in jobs:
+                    jobs[job_id]["message"] = msg
+                    jobs[job_id]["progress"] = percent
 
-        output_filename = f"{input_stem}_compressed{output_format}"
-        output_path = output_root / output_filename
+            jobs[job_id]["status"] = JobStatus.COMPRESSING
+            update_progress("Starting conversion...", 10)
+            logger.info(f"Job {job_id}: Started conversion for {file_path.name}")
 
-        update_progress("Compressing...", 50)
+            try:
+                target_size = parse_size(target_size_str)
+            except ValueError as e:
+                raise Exception(f"Invalid target size: {e}")
 
-        result = compress_file(str(file_path), str(output_path), target_size)
+            input_stem = file_path.stem
+            if not output_format.startswith("."):
+                output_format = f".{output_format}"
 
-        update_progress("All done!", 100)
-        jobs[job_id]["status"] = JobStatus.COMPLETED
-        jobs[job_id]["result_path"] = str(output_path)
-        jobs[job_id]["result_url"] = f"/view_file/{job_id}/{output_filename}"
+            output_filename = f"{input_stem}_compressed{output_format}"
+            output_path = output_root / output_filename
 
-        jobs[job_id]["stats"] = {
-            "original": format_size(result["original_size"]),
-            "compressed": format_size(result["compressed_size"]),
-            "reduction": (
-                f"{(1 - result['compressed_size'] / result['original_size']) * 100:.1f}%"
-                if result["original_size"] > 0
-                else "0%"
-            ),
-        }
-        logger.info(
-            f"Job {job_id}: Completed. Reduction: {jobs[job_id]['stats']['reduction']}"
-        )
+            update_progress("Compressing...", 50)
 
-    except Exception as e:
-        logger.error(f"Job {job_id} Failed: {e}", exc_info=True)
-        if job_id in jobs:
-            jobs[job_id]["status"] = JobStatus.FAILED
-            jobs[job_id]["message"] = f"Error: {str(e)}"
-    finally:
-        # Cleanup input file
-        try:
-            if file_path.exists():
-                os.remove(file_path)
-                logger.debug(f"Cleaned up upload file: {file_path}")
+            result = compress_file(str(file_path), str(output_path), target_size)
+
+            update_progress("All done!", 100)
+            jobs[job_id]["status"] = JobStatus.COMPLETED
+            jobs[job_id]["result_path"] = str(output_path)
+            jobs[job_id]["result_url"] = f"/view_file/{job_id}/{output_filename}"
+
+            jobs[job_id]["stats"] = {
+                "original": format_size(result["original_size"]),
+                "compressed": format_size(result["compressed_size"]),
+                "reduction": (
+                    f"{(1 - result['compressed_size'] / result['original_size']) * 100:.1f}%"
+                    if result["original_size"] > 0
+                    else "0%"
+                ),
+            }
+            upsert_job(jobs[job_id])
+            logger.info(
+                f"Job {job_id}: Completed. Reduction: {jobs[job_id]['stats']['reduction']}"
+            )
+
         except Exception as e:
-            logger.warning(f"Failed to cleanup upload file {file_path}: {e}")
+            logger.error(f"Job {job_id} Failed: {e}", exc_info=True)
+            if job_id in jobs:
+                jobs[job_id]["status"] = JobStatus.FAILED
+                jobs[job_id]["message"] = f"Error: {str(e)}"
+                upsert_job(jobs[job_id])
+        finally:
+            _cancel_requested.discard(job_id)
+            try:
+                if file_path.exists():
+                    os.remove(file_path)
+                    logger.debug(f"Cleaned up upload file: {file_path}")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to cleanup upload file {file_path}: {e}"
+                )
 
 
 # --- Lifecycle Helpers ---
@@ -261,7 +318,7 @@ def _desktop_mode_enabled() -> bool:
 
 def _has_active_jobs() -> bool:
     """Return True when at least one job is not terminal."""
-    terminal = {JobStatus.COMPLETED, JobStatus.FAILED}
+    terminal = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
     return any(job.get("status") not in terminal for job in jobs.values())
 
 
@@ -289,7 +346,7 @@ def _cancel_pending_shutdown_task() -> None:
 
 
 async def _delayed_desktop_shutdown() -> None:
-    """Shutdown after a 3-second grace period if desktop mode is still idle."""
+    """F4.1: Shutdown after GRACE_PERIOD if idle and no jobs are running."""
     try:
         await asyncio.sleep(GRACE_PERIOD)
     except asyncio.CancelledError:
@@ -300,6 +357,11 @@ async def _delayed_desktop_shutdown() -> None:
 
     if _has_active_connections():
         logger.info("Desktop reconnect detected, cancelling shutdown")
+        return
+
+    # F4.1: Don't shut down while jobs are still running
+    if _has_active_jobs():
+        logger.info("Active jobs running; deferring desktop shutdown")
         return
 
     request_graceful_shutdown("desktop websocket disconnected")
@@ -327,11 +389,10 @@ def install_signal_handlers() -> None:
 
 
 def cleanup_old_jobs():
-    """Remove old completed/failed jobs from memory and SQLite store."""
+    """Remove old completed/failed/cancelled jobs from memory and SQLite."""
     try:
         deleted = _store_cleanup(JOB_RETENTION_SECONDS)
-        # Sync the in-process cache
-        terminal = {JobStatus.COMPLETED, JobStatus.FAILED}
+        terminal = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
         cutoff = time.time() - JOB_RETENTION_SECONDS
         for jid in list(jobs.keys()):
             job = jobs[jid]
@@ -343,46 +404,70 @@ def cleanup_old_jobs():
         logger.error(f"Job cleanup failed: {e}")
 
 
+async def _run_periodic_cleanup() -> None:
+    """F4.4: Run job cleanup and stale upload removal every hour."""
+    while True:
+        await asyncio.sleep(3600)
+        cleanup_old_jobs()
+        _cleanup_stale_uploads()
+
+
 def _start_ollama_if_needed() -> None:
-    """Start Ollama if it is not already running; record whether we started it."""
+    """Start Ollama if not running; skip if OLLAMA_HOST is set (remote)."""
     global _ollama_proc, ollama_was_preexisting
+
+    # F4.15: Use configured translation model for the health check
+    startup_model = getattr(SETTINGS, "translation_model", None) or DEFAULT_MODEL
+
+    # F4.12: If a remote host is configured, don't try to start locally
+    ollama_host = os.getenv("OLLAMA_HOST", "")
+
     try:
-        is_running = check_ollama_connection(DEFAULT_MODEL)
+        is_running = check_ollama_connection(startup_model)
     except Exception:
         is_running = False
 
     if is_running:
-        # Successfully connected — Ollama was already running; leave it alone.
         ollama_was_preexisting = True
         logger.info("Ollama is already running (pre-existing instance).")
         return
 
+    if ollama_host:
+        logger.info("OLLAMA_HOST=%s set; not starting local Ollama.", ollama_host)
+        return
+
     logger.info("Ollama not detected — starting 'ollama serve'...")
     ollama_was_preexisting = False
-    _ollama_proc = subprocess.Popen(
-        ["ollama", "serve"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    logger.info(f"Ollama started (PID {_ollama_proc.pid}).")
-    import time
-    import ollama as _ollama
+    try:
+        _ollama_proc = subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        # F4.12: Ollama binary not installed
+        logger.warning("'ollama' binary not found — cannot start local Ollama.")
+        return
 
-    logger.info(f"Ollama started. Waiting up to 15 seconds for API to initialize...")  # noqa: F541
+    logger.info("Ollama started (PID %d). Waiting up to 15s...", _ollama_proc.pid)
+    import ollama as _ollama_mod
+
     for _ in range(15):
         time.sleep(1)
         try:
-            _ollama.list()
+            _ollama_mod.list()
             logger.info("Ollama API is ready.")
             return
         except Exception:
             continue
-    logger.error("Ollama failed to initialize its API within 15 seconds.")
+    logger.error("Ollama failed to initialize within 15 seconds.")
 
 
 def check_ai_engine():
-    """Check Ollama connection in background (called from lifespan thread)."""
+    """Check Ollama connection in background; update _pull_status (F4.19)."""
+    _pull_status["status"] = "checking"
     _start_ollama_if_needed()
+    _pull_status["status"] = "ensuring_model"
     startup_state = ensure_startup_model(
         default_model=SETTINGS.default_model,
         low_resource_model=SETTINGS.low_resource_model,
@@ -391,6 +476,8 @@ def check_ai_engine():
         logger.warning("%s", startup_state["warning"])
     if startup_state.get("pulled"):
         logger.info("Pulled startup model: %s", startup_state.get("selected_model"))
+    _pull_status["status"] = "ready"
+    _pull_status["model"] = startup_state.get("selected_model", "")
 
 
 def _stop_ollama() -> None:
@@ -427,9 +514,19 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Server starting up...")
 
-    # Initialise SQLite job store and restore any in-progress jobs
     init_db()
-    jobs.update({j["id"]: j for j in list_active_jobs()})
+
+    # F4.2: Mark non-terminal jobs from previous run as FAILED (zombie recovery)
+    _terminal = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
+    for j in list_active_jobs():
+        if j.get("status") not in _terminal:
+            j["status"] = JobStatus.FAILED
+            j["message"] = "Server restarted; job aborted"
+            upsert_job(j)
+        jobs[j["id"]] = j
+
+    # F4.14: Remove stale uploads from previous runs
+    _cleanup_stale_uploads()
 
     if _desktop_mode_enabled():
         logger.info("Desktop mode enabled: websocket auto-shutdown is active")
@@ -439,10 +536,16 @@ async def lifespan(app: FastAPI):
     t_ai = threading.Thread(target=check_ai_engine, daemon=True)
     t_ai.start()
 
+    # F4.4: Schedule periodic cleanup
+    cleanup_task = asyncio.create_task(_run_periodic_cleanup())
+
     yield
 
     # Shutdown
     logger.info("Server shutting down...")
+    cleanup_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await cleanup_task
     _cancel_pending_shutdown_task()
     for websocket in list(active_connections):
         with suppress(Exception):
@@ -454,10 +557,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Loctran", lifespan=lifespan)
 
-# CORS - Restrict somewhat for local security
+# F4.18: CORS origins built from configured port (not hardcoded 8000)
+_cors_port = SETTINGS.port
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_origins=[
+        f"http://localhost:{_cors_port}",
+        f"http://127.0.0.1:{_cors_port}",
+    ],
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -503,23 +610,24 @@ def get_startup_info():
         "recommended_model": recommended_model,
         "ram_gb": ram_gb,
         "large_model_warning": should_warn_large_model(SETTINGS.default_model, ram_gb),
+        "ollama_status": _pull_status,  # F4.19
     }
 
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """Upload a PDF or Image file."""
-    # 1. Validation
     if not file.filename:
         raise HTTPException(400, "No filename provided")
 
-    ext = Path(file.filename).suffix.lower()
+    # F4.6: Sanitize before any path use
+    safe_name = _sanitize_filename(file.filename)
+    ext = Path(safe_name).suffix.lower()
     if ext not in [".pdf", ".jpg", ".jpeg", ".png", ".txt"]:
         raise HTTPException(400, "Invalid file type. Only PDF, JPG, PNG, TXT allowed.")
 
-    # 2. Save with size limit check
     file_id = str(uuid.uuid4())
-    file_path = UPLOAD_DIR / f"{file_id}_{file.filename}"  # Sanitize?
+    file_path = UPLOAD_DIR / f"{file_id}_{safe_name}"
 
     try:
         size = 0
@@ -549,12 +657,13 @@ async def upload_file(file: UploadFile = File(...)):
 @app.get("/choose_folder")
 def choose_folder(prompt: str = "Choose where to save"):
     """Opens a native folder picker dialog (cross-platform)."""
+    # F4.8: Fixed server-side prompt prevents AppleScript/shell injection
+    _SAFE_PROMPT = "Choose output folder"
     global DIALOG_OPEN
     DIALOG_OPEN = True
     try:
         if sys.platform == "darwin":
-            # macOS: Use AppleScript
-            script = f'POSIX path of (choose folder with prompt "{prompt}")'
+            script = f'POSIX path of (choose folder with prompt "{_SAFE_PROMPT}")'
             result = (
                 subprocess.check_output(["osascript", "-e", script]).decode().strip()
             )
@@ -565,13 +674,12 @@ def choose_folder(prompt: str = "Choose where to save"):
             )
 
         elif sys.platform == "win32":
-            # Windows: Use PowerShell
-            ps_script = f"""
-            Add-Type -AssemblyName System.Windows.Forms
-            $folder = New-Object System.Windows.Forms.FolderBrowserDialog
-            $folder.Description = "{prompt}"
-            if ($folder.ShowDialog() -eq "OK") {{ $folder.SelectedPath }} else {{ exit 1 }}
-            """
+            ps_script = (
+                "Add-Type -AssemblyName System.Windows.Forms; "
+                "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+                f'$f.Description = "{_SAFE_PROMPT}"; '
+                'if ($f.ShowDialog() -eq "OK") { $f.SelectedPath } else { exit 1 }'
+            )
             result = (
                 subprocess.check_output(["powershell", "-Command", ps_script])
                 .decode()
@@ -580,7 +688,6 @@ def choose_folder(prompt: str = "Choose where to save"):
             return {"path": result} if result else {"error": "No folder selected"}
 
         else:
-            # Linux: Try zenity first, then kdialog
             try:
                 result = (
                     subprocess.check_output(
@@ -588,7 +695,7 @@ def choose_folder(prompt: str = "Choose where to save"):
                             "zenity",
                             "--file-selection",
                             "--directory",
-                            f"--title={prompt}",
+                            f"--title={_SAFE_PROMPT}",
                         ]
                     )
                     .decode()
@@ -604,7 +711,7 @@ def choose_folder(prompt: str = "Choose where to save"):
                                 "--getexistingdirectory",
                                 ".",
                                 "--title",
-                                prompt,
+                                _SAFE_PROMPT,
                             ]
                         )
                         .decode()
@@ -671,7 +778,7 @@ def start_process(
             detail="OCR engine must be a vision model. Please select a valid vision model.",
         )
 
-    # --- Translation model validation ---
+    # F4.11: Translation model keyword mismatch is a warning, not a hard block
     _TRANSLATE_KEYWORDS = (
         "gemma",
         "qwen",
@@ -682,9 +789,9 @@ def start_process(
         "deepseek",
     )
     if not any(kw in model.lower() for kw in _TRANSLATE_KEYWORDS):
-        raise HTTPException(
-            status_code=400,
-            detail="Selected model is not compatible with translation. Please select a valid LLM.",
+        logger.warning(
+            "Model %r does not match known translation keywords — proceeding anyway",
+            model,
         )
 
     ram_gb = estimate_system_ram_gb()
@@ -715,6 +822,7 @@ def start_process(
         "result_path": str(output_root / Path(filename).stem),
         "created_at": time.time(),
     }
+    upsert_job(jobs[job_id])  # F4.3: persist at creation
 
     background_tasks.add_task(
         run_pipeline,
@@ -767,6 +875,7 @@ def start_conversion(
         "result_path": str(output_root),
         "created_at": time.time(),
     }
+    upsert_job(jobs[job_id])  # F4.3: persist at creation
 
     background_tasks.add_task(
         run_conversion,
@@ -786,6 +895,22 @@ def get_status(job_id: str):
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
     return jobs[job_id]
+
+
+@app.post("/cancel/{job_id}")
+def cancel_job(job_id: str):
+    """F4.5: Request cancellation of a queued or running job."""
+    if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+    status = jobs[job_id].get("status")
+    _terminal = {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
+    if status in _terminal:
+        return {"status": "already_terminal", "job_status": status}
+    _cancel_requested.add(job_id)
+    jobs[job_id]["status"] = JobStatus.CANCELLED
+    jobs[job_id]["message"] = "Cancellation requested"
+    upsert_job(jobs[job_id])
+    return {"status": "cancel_requested", "job_id": job_id}
 
 
 @app.get("/models")
@@ -834,14 +959,16 @@ def view_result_file(job_id: str, relative_path: str):
     if not result_path_str:
         raise HTTPException(404, "Result path not found")
 
-    base_dir = Path(result_path_str)
+    base_dir = Path(result_path_str).resolve()
     try:
         file_path = (base_dir / relative_path).resolve()
     except Exception:
         raise HTTPException(400, "Invalid path")
 
-    # Security: Ensure file is inside the base_dir
-    if not str(file_path).startswith(str(base_dir)):
+    # F4.7: Use relative_to() — robust against case-folding startswith bypasses
+    try:
+        file_path.relative_to(base_dir)
+    except ValueError:
         logger.warning(f"Access denied: {file_path} is outside {base_dir}")
         raise HTTPException(403, "Access denied")
 
@@ -888,7 +1015,8 @@ def open_output_folder(job_id: str):
         if sys.platform == "darwin":
             subprocess.run(["open", "-R", str(path)])
         elif sys.platform == "win32":
-            subprocess.run(["explore", str(path)])
+            # F4.10: correct Windows explorer syntax for selecting a file/folder
+            subprocess.run(["explorer", f"/select,{path}"])
         else:
             folder = path.parent if path.is_file() else path
             subprocess.run(["xdg-open", str(folder)])
@@ -919,7 +1047,7 @@ async def websocket_heartbeat(websocket: WebSocket):
             _pending_shutdown_task = asyncio.create_task(_delayed_desktop_shutdown())
 
 
-def build_server(host: str = "0.0.0.0", port: int = 8000) -> uvicorn.Server:
+def build_server(host: str = "127.0.0.1", port: int = 8000) -> uvicorn.Server:
     """Build and register a Uvicorn server instance for controlled shutdown."""
     global _server_instance
     log_config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
@@ -949,5 +1077,5 @@ if __name__ == "__main__":
     if "--desktop-mode" in sys.argv:
         os.environ["LOCTRAN_DESKTOP_MODE"] = "1"
     install_signal_handlers()
-    server = build_server(host="0.0.0.0", port=SETTINGS.port)
+    server = build_server(host="127.0.0.1", port=SETTINGS.port)
     server.run()

@@ -104,20 +104,23 @@ class TestProcess:
         )
         assert resp.status_code == 400
 
-    def test_rejects_non_translate_model(self, client, tmp_path):
+    def test_warns_but_accepts_non_translate_model(self, client, tmp_path):
+        """F4.11: unknown model keyword now warns instead of returning 400."""
         saved = tmp_path / "doc.pdf"
         saved.write_bytes(b"%PDF-1.4")
-        resp = client.post(
-            "/process",
-            params={
-                "filename": "doc.pdf",
-                "saved_path": str(saved),
-                "lang": "French",
-                "model": "badmodel:latest",
-                "vision_model": "llava:latest",
-            },
-        )
-        assert resp.status_code == 400
+        with patch("loctran.server.server.threading.Thread"):
+            resp = client.post(
+                "/process",
+                params={
+                    "filename": "doc.pdf",
+                    "saved_path": str(saved),
+                    "lang": "French",
+                    "model": "badmodel:latest",
+                    "vision_model": "llava:latest",
+                },
+            )
+        assert resp.status_code == 200
+        assert "job_id" in resp.json()
 
     def test_queues_valid_job(self, client, tmp_path):
         saved = tmp_path / "doc.pdf"

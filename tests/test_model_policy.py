@@ -103,8 +103,8 @@ class TestModelPolicy:
                 response = client.get("/api/startup-info")
 
         assert response.status_code == 200
-        assert response.json() == {
-            "recommended_model": "qwen2.5:3b",
-            "ram_gb": 6.0,
-            "large_model_warning": True,
-        }
+        data = response.json()
+        assert data["recommended_model"] == "qwen2.5:3b"
+        assert data["ram_gb"] == 6.0
+        assert data["large_model_warning"] is True
+        assert "ollama_status" in data  # F4.19

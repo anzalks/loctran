@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -15,6 +16,10 @@ DB_PATH = Path.home() / ".loctran" / "jobs.db"
 
 # In-process cache: job_id -> job dict
 _cache: dict[str, dict] = {}
+
+# F4.17: module-level write lock — SQLite WAL allows one writer at a time;
+# the Python lock serialises concurrent upsert/delete calls from threads.
+_db_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +39,7 @@ def init_db() -> None:
     """Initialise the database and warm the in-memory cache."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = _connect()
+    con.execute("PRAGMA journal_mode=WAL")  # F4.17: WAL for concurrent reads
     con.execute(_DDL)
     con.commit()
     # Warm cache from persisted rows
@@ -58,13 +64,15 @@ def upsert_job(job: dict) -> None:
     """Write job to cache and database."""
     job_id: str = job["id"]
     _cache[job_id] = job
-    con = _connect()
-    con.execute(
-        "INSERT OR REPLACE INTO jobs (job_id, data, updated_at) VALUES (?, ?, ?)",
-        (job_id, json.dumps(job), time.time()),
-    )
-    con.commit()
-    con.close()
+    with _db_lock:  # F4.17: serialise writes
+        con = _connect()
+        con.execute(
+            "INSERT OR REPLACE INTO jobs (job_id, data, updated_at)"
+            " VALUES (?, ?, ?)",
+            (job_id, json.dumps(job), time.time()),
+        )
+        con.commit()
+        con.close()
 
 
 def get_job(job_id: str) -> dict | None:
@@ -82,8 +90,8 @@ def get_job(job_id: str) -> dict | None:
 
 
 def list_active_jobs() -> list[dict]:
-    """Return all jobs that are not completed or failed."""
-    terminal = {"completed", "failed"}
+    """Return all jobs that are not completed, failed, or cancelled."""
+    terminal = {"completed", "failed", "cancelled"}
     return [j for j in _cache.values() if j.get("status") not in terminal]
 
 
@@ -97,16 +105,18 @@ def cleanup_old_jobs(retention_seconds: int = 3600) -> int:
     to_delete = [
         jid
         for jid, j in list(_cache.items())
-        if j.get("status") in {"completed", "failed"}
+        if j.get("status") in {"completed", "failed", "cancelled"}
         and j.get("created_at", 0) < cutoff
     ]
     if to_delete:
-        con = _connect()
-        con.executemany(
-            "DELETE FROM jobs WHERE job_id = ?", [(jid,) for jid in to_delete]
-        )
-        con.commit()
-        con.close()
+        with _db_lock:  # F4.17: serialise writes
+            con = _connect()
+            con.executemany(
+                "DELETE FROM jobs WHERE job_id = ?",
+                [(jid,) for jid in to_delete],
+            )
+            con.commit()
+            con.close()
         for jid in to_delete:
             _cache.pop(jid, None)
     return len(to_delete)
