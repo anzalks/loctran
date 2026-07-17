@@ -57,10 +57,9 @@ class TestTranslateSegmentsHappy:
             ]
         )
 
-        with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(
-                chat=MagicMock(return_value=llm_reply)
-            )
+        mock_client = MagicMock()
+        mock_client.chat.return_value = llm_reply
+        with patch("loctran.translate._get_translate_client", return_value=mock_client):
             from loctran.translate import translate_segments
 
             result = translate_segments(segs, model="test-model", target_lang="French")
@@ -76,10 +75,9 @@ class TestTranslateSegmentsHappy:
         segs = [_segment("   "), _segment("\t"), _segment("Hello")]
         llm_reply = _ollama_response([{"id": 0, "translation": "Bonjour"}])
 
-        with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(
-                chat=MagicMock(return_value=llm_reply)
-            )
+        mock_client = MagicMock()
+        mock_client.chat.return_value = llm_reply
+        with patch("loctran.translate._get_translate_client", return_value=mock_client):
             from loctran.translate import translate_segments
 
             result = translate_segments(segs, model="test-model", target_lang="French")
@@ -101,15 +99,14 @@ class TestTranslateSegmentsHappy:
                 ]
             )
 
-        with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_ollama = MagicMock()
-            mock_ollama.chat = MagicMock(side_effect=_reply)
-            mock_get_ollama.return_value = mock_ollama
+        mock_client = MagicMock()
+        mock_client.chat = MagicMock(side_effect=_reply)
+        with patch("loctran.translate._get_translate_client", return_value=mock_client):
             from loctran.translate import translate_segments
 
             result = translate_segments(segs, model="test-model", target_lang="French")
 
-        assert mock_ollama.chat.call_count >= 2
+        assert mock_client.chat.call_count >= 2
         assert len(result) == 7
 
 
@@ -138,11 +135,10 @@ class TestTranslateSegmentsFallback:
                     return {"message": {"content": "Beta"}}
                 return {"message": {"content": "Gamma"}}
 
-        with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(
-                chat=MagicMock(side_effect=_selective_reply)
-            )
-            with patch("loctran.translate.time.sleep"):  # skip real sleeps
+        mock_client = MagicMock()
+        mock_client.chat = MagicMock(side_effect=_selective_reply)
+        with patch("loctran.translate._get_translate_client", return_value=mock_client):
+            with patch("loctran.translate.time.sleep"):
                 from loctran.translate import translate_segments
 
                 result = translate_segments(
@@ -156,10 +152,9 @@ class TestTranslateSegmentsFallback:
         """If every call raises, translate_segments returns {} without crashing."""
         segs = [_segment("Hello"), _segment("World")]
 
-        with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(
-                chat=MagicMock(side_effect=RuntimeError("network down"))
-            )
+        mock_client = MagicMock()
+        mock_client.chat = MagicMock(side_effect=RuntimeError("network down"))
+        with patch("loctran.translate._get_translate_client", return_value=mock_client):
             with patch("loctran.translate.time.sleep"):
                 from loctran.translate import translate_segments
 
@@ -185,10 +180,9 @@ class TestTranslateSegmentsFallback:
             ]
         )
 
-        with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(
-                chat=MagicMock(side_effect=lambda **kw: next(call_iter))
-            )
+        mock_client = MagicMock()
+        mock_client.chat = MagicMock(side_effect=lambda **kw: next(call_iter))
+        with patch("loctran.translate._get_translate_client", return_value=mock_client):
             with patch("loctran.translate.time.sleep"):
                 from loctran.translate import translate_segments
 
@@ -219,8 +213,9 @@ class TestTranslateChunkInternal:
             ]
         )
 
-        with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(chat=MagicMock(return_value=reply))
+        mock_client = MagicMock()
+        mock_client.chat.return_value = reply
+        with patch("loctran.translate._get_translate_client", return_value=mock_client):
             result = _translate_chunk(chunk, model="test-model", target_lang="French")
 
         assert result[10] == "Baz"
@@ -229,8 +224,8 @@ class TestTranslateChunkInternal:
     def test_empty_chunk_returns_empty(self):
         from loctran.translate import _translate_chunk
 
-        with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(chat=MagicMock())
+        mock_client = MagicMock()
+        with patch("loctran.translate._get_translate_client", return_value=mock_client):
             result = _translate_chunk([], model="test-model", target_lang="French")
         # Empty chunk → no LLM call required (the function may call or not call)
         assert isinstance(result, dict)
@@ -260,10 +255,9 @@ class TestTranslateSegmentsBatchFallback:
                 return {"message": {"content": "Bonjour"}}
             return {"message": {"content": "Monde"}}
 
-        with patch("loctran.translate._get_ollama") as mock_get_ollama:
-            mock_get_ollama.return_value = MagicMock(
-                chat=MagicMock(side_effect=_side_effect)
-            )
+        mock_client = MagicMock()
+        mock_client.chat = MagicMock(side_effect=_side_effect)
+        with patch("loctran.translate._get_translate_client", return_value=mock_client):
             with patch("loctran.translate.time.sleep"):
                 from loctran.translate import translate_segments
 
@@ -308,13 +302,146 @@ class TestExtractJsonArrayStrategies:
 
 class TestTranslateEmptySegments:
     def test_empty_returns_empty_dict_no_ollama_call(self):
-        with patch("loctran.translate._get_ollama") as mock_get_ollama:
+        with patch("loctran.translate._get_translate_client") as mock_client:
             from loctran.translate import translate_segments
 
             result = translate_segments([], model="test-model", target_lang="French")
 
-        mock_get_ollama.assert_not_called()
+        mock_client.assert_not_called()
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestPhase3Regressions:
+    def test_f3_6_balanced_bracket_scan_ignores_outer_chatter(self):
+        """F3.6: balanced scan must not be tricked by ] inside a translation string."""
+        from loctran.translate import _extract_json_array
+
+        content = (
+            'Here is the result: [{"id":0,"translation":"a]b"}] extra text'
+        )
+        result = _extract_json_array(content)
+        assert result == [{"id": 0, "translation": "a]b"}]
+
+    def test_f3_5_get_translation_value_fallback_keys(self):
+        """F3.5: _get_translation_value should try 'text' and 'translated' keys."""
+        from loctran.translate import _get_translation_value
+
+        assert _get_translation_value({"text": "hi"}) == "hi"
+        assert _get_translation_value({"translated": "hi"}) == "hi"
+        assert _get_translation_value({"output": "hi"}) == "hi"
+        assert _get_translation_value({}) is None
+
+    def test_f3_5_get_translation_value_coerces_to_str(self):
+        """F3.5: numeric values must be coerced to str, not dropped."""
+        from loctran.translate import _get_translation_value
+
+        assert _get_translation_value({"translation": 42}) == "42"
+
+    def test_f3_11_translate_single_with_retry_returns_none_on_all_fail(self):
+        """F3.11: _translate_single_with_retry returns None after all attempts."""
+        from loctran.translate import _translate_single_with_retry
+
+        mock_client = MagicMock()
+        mock_client.chat.side_effect = RuntimeError("down")
+        with patch("loctran.translate._get_translate_client", return_value=mock_client):
+            with patch("loctran.translate.time.sleep"):
+                result = _translate_single_with_retry(
+                    "Hello", "French", "test-model", max_attempts=2
+                )
+        assert result is None
+        assert mock_client.chat.call_count == 2
+
+    def test_f3_4_memoization_skips_duplicate_cross_page_calls(self):
+        """F3.4: second translate_segments call with same memo must not hit LLM again."""
+        from loctran.translate import translate_segments
+
+        llm_reply = _ollama_response([{"id": 0, "translation": "Bonjour"}])
+        mock_client = MagicMock()
+        mock_client.chat.return_value = llm_reply
+        memo: dict = {}
+
+        with patch("loctran.translate._get_translate_client", return_value=mock_client):
+            # First page — translate "Hello"
+            result1 = translate_segments(
+                [_segment("Hello")], "test-model", "French", _memo=memo
+            )
+            call_count_after_first = mock_client.chat.call_count
+
+            # Second page — same text should hit memo, no new LLM call
+            result2 = translate_segments(
+                [_segment("Hello")], "test-model", "French", _memo=memo
+            )
+
+        assert result1[0] == "Bonjour"
+        assert result2[0] == "Bonjour"
+        # LLM must NOT have been called again for the second page
+        assert mock_client.chat.call_count == call_count_after_first
+
+    def test_f3_8_group_segments_single_column(self):
+        """F3.8: vertically close segments must be grouped together."""
+        from loctran.translate import _group_segments_into_paragraphs
+
+        segs = [
+            {"bbox": [0, 0, 100, 20], "text": "Line 1"},
+            {"bbox": [0, 25, 100, 20], "text": "Line 2"},  # gap 5, median 20
+            {"bbox": [0, 200, 100, 20], "text": "Far line"},  # gap 175 >> 0.6*20
+        ]
+        groups = _group_segments_into_paragraphs(segs)
+        assert len(groups) == 2
+        assert len(groups[0]) == 2
+        assert len(groups[1]) == 1
+
+    def test_f3_8_redistribute_proportional(self):
+        """F3.8: translation is distributed proportionally by source char count."""
+        from loctran.translate import _redistribute_translation
+
+        group = [
+            {"text": "Short", "bbox": [0, 0, 100, 20]},
+            {"text": "A much longer line here", "bbox": [0, 25, 100, 20]},
+        ]
+        _redistribute_translation(group, "translated words one two three four")
+        # Both segments should now have a translation
+        assert group[0].get("translation", "")
+        assert group[1].get("translation", "")
+
+    def test_f3_9_lang_name_to_iso(self):
+        """F3.9: language name→ISO mapping covers common UI entries."""
+        from loctran.translate import _lang_name_to_iso
+
+        assert _lang_name_to_iso("English") == "en"
+        assert _lang_name_to_iso("french") == "fr"
+        assert _lang_name_to_iso("CHINESE") == "zh"
+        assert _lang_name_to_iso("Unknown Language XYZ") == ""
+
+    def test_f3_7_word_char_filter_keeps_cjk(self):
+        """F3.7: CJK single-character segments must pass the word-char filter."""
+        from loctran.translate import _HAS_WORD_CHAR
+
+        assert _HAS_WORD_CHAR.search("的")  # Chinese character
+        assert _HAS_WORD_CHAR.search("a")   # ASCII
+        assert not _HAS_WORD_CHAR.search("…")  # punctuation only
+        assert not _HAS_WORD_CHAR.search("  ")  # whitespace only
+
+    def test_f3_10_cli_lang_help_says_target(self):
+        """F3.10: --lang help text must say 'Target', not 'Source'."""
+        import argparse
+        from loctran.translate import main
+
+        # Capture the help text
+        parser = argparse.ArgumentParser()
+        parser.add_argument("input_path")
+        from loctran.translate import DEFAULT_MODEL, DEFAULT_LANG
+        parser.add_argument("--lang", default=DEFAULT_LANG,
+                            help="Target language for translation")
+        parser.add_argument("--model", default=DEFAULT_MODEL, help="Ollama model")
+        help_text = parser.format_help()
+        assert "Target" in help_text
+        assert "Source" not in help_text
 
 
 # ---------------------------------------------------------------------------
@@ -464,13 +591,24 @@ class TestGetOverlayHtml:
 
 class TestCheckOllamaConnection:
     def test_returns_true_when_list_succeeds(self):
+        """F3.2: returns True only when Ollama is reachable AND the model is present."""
         from loctran.translate import check_ollama_connection
 
         mock_ollama = MagicMock()
-        mock_ollama.list.return_value = {"models": []}
+        mock_ollama.list.return_value = {"models": [{"model": "any-model"}]}
         with patch("loctran.translate._get_ollama", return_value=mock_ollama):
             result = check_ollama_connection("any-model")
         assert result is True
+
+    def test_returns_false_when_model_not_in_list(self):
+        """F3.2: returns False when model is missing from Ollama's model list."""
+        from loctran.translate import check_ollama_connection
+
+        mock_ollama = MagicMock()
+        mock_ollama.list.return_value = {"models": [{"model": "other-model"}]}
+        with patch("loctran.translate._get_ollama", return_value=mock_ollama):
+            result = check_ollama_connection("missing-model")
+        assert result is False
 
     def test_returns_false_when_list_fails(self):
         from loctran.translate import check_ollama_connection
@@ -557,13 +695,13 @@ class TestProcessFolder:
             }
         ]
         self._write_input_data(tmp_path, slides)
-        mock_ollama = MagicMock()
-        mock_ollama.chat.return_value = {
+        mock_client = MagicMock()
+        mock_client.chat.return_value = {
             "message": {"content": '[{"id":0,"translation":"Bonjour monde"}]'}
         }
         with (
             patch("loctran.translate.check_ollama_connection", return_value=True),
-            patch("loctran.translate._get_ollama", return_value=mock_ollama),
+            patch("loctran.translate._get_translate_client", return_value=mock_client),
             patch("loctran.translate.time.sleep"),
         ):
             process_folder(tmp_path, "French", "qwen2.5:7b")
