@@ -321,9 +321,7 @@ class TestPhase3Regressions:
         """F3.6: balanced scan must not be tricked by ] inside a translation string."""
         from loctran.translate import _extract_json_array
 
-        content = (
-            'Here is the result: [{"id":0,"translation":"a]b"}] extra text'
-        )
+        content = 'Here is the result: [{"id":0,"translation":"a]b"}] extra text'
         result = _extract_json_array(content)
         assert result == [{"id": 0, "translation": "a]b"}]
 
@@ -423,7 +421,7 @@ class TestPhase3Regressions:
         from loctran.translate import _HAS_WORD_CHAR
 
         assert _HAS_WORD_CHAR.search("的")  # Chinese character
-        assert _HAS_WORD_CHAR.search("a")   # ASCII
+        assert _HAS_WORD_CHAR.search("a")  # ASCII
         assert not _HAS_WORD_CHAR.search("…")  # punctuation only
         assert not _HAS_WORD_CHAR.search("  ")  # whitespace only
 
@@ -435,8 +433,10 @@ class TestPhase3Regressions:
         parser = argparse.ArgumentParser()
         parser.add_argument("input_path")
         from loctran.translate import DEFAULT_MODEL, DEFAULT_LANG
-        parser.add_argument("--lang", default=DEFAULT_LANG,
-                            help="Target language for translation")
+
+        parser.add_argument(
+            "--lang", default=DEFAULT_LANG, help="Target language for translation"
+        )
         parser.add_argument("--model", default=DEFAULT_MODEL, help="Ollama model")
         help_text = parser.format_help()
         assert "Target" in help_text
@@ -706,3 +706,307 @@ class TestProcessFolder:
             process_folder(tmp_path, "French", "qwen2.5:7b")
         html = (tmp_path / f"{tmp_path.name}.html").read_text()
         assert "Hello world" in html
+
+
+# ------------------------------------------------------------------
+# render.py: _sample_bg coverage
+# ------------------------------------------------------------------
+
+
+class TestSampleBg:
+    def test_sample_bg_returns_colours_for_white_image(self, tmp_path):
+        from PIL import Image
+
+        from loctran.render import _sample_bg
+
+        img = Image.new("RGB", (100, 100), "white")
+        p = tmp_path / "white.png"
+        img.save(p)
+        bg, txt = _sample_bg(str(p), [10, 10, 50, 50], 100, 100)
+        assert "rgb(" in bg
+        assert txt == "#000"
+
+    def test_sample_bg_returns_light_text_for_dark_image(self, tmp_path):
+        from PIL import Image
+
+        from loctran.render import _sample_bg
+
+        img = Image.new("RGB", (100, 100), (10, 10, 10))
+        p = tmp_path / "dark.png"
+        img.save(p)
+        bg, txt = _sample_bg(str(p), [10, 10, 50, 50], 100, 100)
+        assert txt == "#fff"
+
+    def test_sample_bg_fallback_on_missing_file(self):
+        from loctran.render import _sample_bg
+
+        bg, txt = _sample_bg("/nonexistent/path.png", [0, 0, 50, 50], 100, 100)
+        assert bg == "white"
+        assert txt == "#1a1a2e"
+
+    def test_overlay_uses_sample_bg_when_img_path_given(self, tmp_path):
+        from PIL import Image
+
+        from loctran.render import get_overlay_html
+
+        img = Image.new("RGB", (200, 200), (0, 0, 128))
+        p = tmp_path / "blue.png"
+        img.save(p)
+        seg = {"bbox": [10, 10, 80, 20], "text": "Hi", "translation": "Hola"}
+        html = get_overlay_html(200, 200, "blue.png", [seg], img_path=str(p))
+        assert "rgb(" in html
+
+    def test_overlay_skips_empty_segments(self):
+        from loctran.render import get_overlay_html
+
+        seg = {"bbox": [0, 0, 100, 20], "text": "", "translation": ""}
+        html = get_overlay_html(800, 600, "p.png", [seg])
+        assert "translated-box" not in html
+
+
+# ------------------------------------------------------------------
+# model_policy.py: coverage for list/pull/dual-mode
+# ------------------------------------------------------------------
+
+
+class TestModelPolicyCoverage:
+    def test_get_ollama_raises_when_missing(self):
+        from unittest.mock import patch
+
+        from loctran.model_policy import _get_ollama
+
+        with patch.dict("sys.modules", {"ollama": None}):
+            import importlib
+
+            try:
+                _get_ollama()
+            except RuntimeError as e:
+                assert "ollama" in str(e).lower()
+
+    def test_list_local_models_returns_names(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from loctran.model_policy import list_local_models
+
+        mock_ollama = MagicMock()
+        mock_ollama.list.return_value = SimpleNamespace(
+            models=[
+                SimpleNamespace(model="qwen2.5:7b"),
+                SimpleNamespace(model="glm-ocr:latest"),
+            ]
+        )
+        with patch("loctran.model_policy._get_ollama", return_value=mock_ollama):
+            result = list_local_models()
+        assert "qwen2.5:7b" in result
+        assert "glm-ocr:latest" in result
+
+    def test_list_local_models_returns_empty_on_error(self):
+        from unittest.mock import patch
+
+        from loctran.model_policy import list_local_models
+
+        with patch(
+            "loctran.model_policy._get_ollama", side_effect=Exception("no ollama")
+        ):
+            result = list_local_models()
+        assert result == []
+
+    def test_list_local_models_dict_format(self):
+        from unittest.mock import patch
+
+        from loctran.model_policy import list_local_models
+
+        mock_ollama = MagicMock()
+        mock_ollama.list.return_value = {
+            "models": [{"model": "llama3:8b"}, {"name": "phi3:mini"}]
+        }
+        with patch("loctran.model_policy._get_ollama", return_value=mock_ollama):
+            result = list_local_models()
+        assert "llama3:8b" in result
+
+    def test_pull_model_success(self):
+        from unittest.mock import patch
+
+        from loctran.model_policy import pull_model
+
+        mock_ollama = MagicMock()
+        with patch("loctran.model_policy._get_ollama", return_value=mock_ollama):
+            assert pull_model("test:latest") is True
+        mock_ollama.pull.assert_called_once_with("test:latest")
+
+    def test_pull_model_failure(self):
+        from unittest.mock import patch
+
+        from loctran.model_policy import pull_model
+
+        mock_ollama = MagicMock()
+        mock_ollama.pull.side_effect = Exception("network error")
+        with patch("loctran.model_policy._get_ollama", return_value=mock_ollama):
+            assert pull_model("test:latest") is False
+
+    def test_ensure_startup_dual_mode_pulls_missing(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from loctran.model_policy import ensure_startup_model
+
+        mock_ollama = MagicMock()
+        call_count = [0]
+
+        def fake_list():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return SimpleNamespace(models=[])
+            return SimpleNamespace(
+                models=[
+                    SimpleNamespace(model="glm-ocr"),
+                    SimpleNamespace(model="translategemma:4b"),
+                ]
+            )
+
+        mock_ollama.list = fake_list
+        mock_ollama.pull = MagicMock()
+
+        with (
+            patch("loctran.model_policy._get_ollama", return_value=mock_ollama),
+            patch("loctran.model_policy.estimate_system_ram_gb", return_value=16.0),
+        ):
+            state = ensure_startup_model(
+                translation_model="translategemma:4b",
+                ocr_model="glm-ocr",
+            )
+        assert state["verified"] is True
+        assert state["pulled"] is True
+        assert len(state["pulled_models"]) == 2
+
+    def test_ensure_startup_dual_mode_warning(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from loctran.model_policy import ensure_startup_model
+
+        mock_ollama = MagicMock()
+        mock_ollama.list.return_value = SimpleNamespace(
+            models=[
+                SimpleNamespace(model="glm-ocr"),
+                SimpleNamespace(model="qwen2.5:32b"),
+            ]
+        )
+        with (
+            patch("loctran.model_policy._get_ollama", return_value=mock_ollama),
+            patch("loctran.model_policy.estimate_system_ram_gb", return_value=6.0),
+        ):
+            state = ensure_startup_model(
+                translation_model="qwen2.5:32b",
+                ocr_model="glm-ocr",
+            )
+        assert state["warning"] is not None
+        assert "too large" in state["warning"]
+
+
+# ------------------------------------------------------------------
+# translate.py: JSON extraction + redistribute edge cases
+# ------------------------------------------------------------------
+
+
+class TestJsonExtraction:
+    def test_find_balanced_array_with_escape(self):
+        from loctran.translate import _find_balanced_array
+
+        content = r'some text [{"key": "val with \" escape"}] more'
+        result = _find_balanced_array(content)
+        assert result is not None
+        assert result.startswith("[")
+        assert result.endswith("]")
+
+    def test_find_balanced_array_nested(self):
+        from loctran.translate import _find_balanced_array
+
+        content = 'prefix [["a", "b"], ["c"]] suffix'
+        result = _find_balanced_array(content)
+        assert result == '[["a", "b"], ["c"]]'
+
+    def test_find_balanced_array_none_when_unbalanced(self):
+        from loctran.translate import _find_balanced_array
+
+        assert _find_balanced_array("no brackets here") is None
+
+    def test_extract_json_from_code_fence(self):
+        from loctran.translate import _extract_json_array
+
+        content = '```json\n[{"id": 0, "translation": "hi"}]\n```'
+        result = _extract_json_array(content)
+        assert len(result) == 1
+        assert result[0]["translation"] == "hi"
+
+    def test_extract_json_from_generic_fence(self):
+        from loctran.translate import _extract_json_array
+
+        content = '```\n[{"id": 0, "translation": "hi"}]\n```'
+        result = _extract_json_array(content)
+        assert len(result) == 1
+
+    def test_extract_json_from_balanced_brackets(self):
+        from loctran.translate import _extract_json_array
+
+        content = 'Here is the result: [{"id": 0, "translation": "hi"}].'
+        result = _extract_json_array(content)
+        assert len(result) == 1
+
+    def test_extract_json_raw(self):
+        from loctran.translate import _extract_json_array
+
+        content = '[{"id": 0, "translation": "hi"}]'
+        result = _extract_json_array(content)
+        assert len(result) == 1
+
+    def test_extract_json_raises_on_garbage(self):
+        import pytest
+
+        from loctran.exceptions import TranslationError
+        from loctran.translate import _extract_json_array
+
+        with pytest.raises(TranslationError):
+            _extract_json_array("not json at all")
+
+
+class TestRedistributeEdgeCases:
+    def test_empty_translation_sets_empty(self):
+        from loctran.translate import _redistribute_translation
+
+        group = [
+            {"text": "Hello", "bbox": [0, 0, 100, 20]},
+            {"text": "World", "bbox": [0, 20, 100, 20]},
+        ]
+        _redistribute_translation(group, "")
+        for s in group:
+            assert s["translation"] == ""
+
+    def test_segment_getting_zero_words_stays_empty(self):
+        from loctran.translate import _redistribute_translation
+
+        group = [
+            {"text": "A very long segment with many words", "bbox": [0, 0, 100, 20]},
+            {"text": "x", "bbox": [0, 20, 100, 20]},
+        ]
+        _redistribute_translation(group, "One")
+        assert group[0]["translation"] == "One"
+        assert group[1]["translation"] == ""
+
+
+class TestGroupSegmentsCoverage:
+    def test_empty_segments_returns_empty(self):
+        from loctran.translate import _group_segments_into_paragraphs
+
+        assert _group_segments_into_paragraphs([]) == []
+
+    def test_zero_height_segments_use_default(self):
+        from loctran.translate import _group_segments_into_paragraphs
+
+        segs = [
+            {"text": "a", "bbox": [0, 0, 100, 0]},
+            {"text": "b", "bbox": [0, 5, 100, 0]},
+        ]
+        groups = _group_segments_into_paragraphs(segs)
+        assert len(groups) >= 1
