@@ -163,17 +163,24 @@ def ensure_startup_model(
             "verified": bool(local_models or pulled),
         }
 
-    required_models = [ocr_model, selected_translation]
+    required_models = [selected_translation]
+    if ocr_model:
+        required_models.append(ocr_model)
     local_models = list_local_models()
+    local_normalized = {normalize_model_tag(m) for m in local_models}
 
-    missing_models = [m for m in required_models if m not in local_models]
+    missing_models = [
+        m for m in required_models if normalize_model_tag(m) not in local_normalized
+    ]
     pulled_models: list[str] = []
     for model_name in missing_models:
         if pull_model(model_name):
             pulled_models.append(model_name)
 
-    refreshed_models = set(list_local_models())
-    still_missing = [m for m in required_models if m not in refreshed_models]
+    refreshed_normalized = {normalize_model_tag(m) for m in list_local_models()}
+    still_missing = [
+        m for m in required_models if normalize_model_tag(m) not in refreshed_normalized
+    ]
     pulled = bool(pulled_models)
     verified = not still_missing
 

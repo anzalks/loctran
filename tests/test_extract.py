@@ -458,6 +458,106 @@ class TestMergeWords:
         assert result["bbox"][3] < 200
 
 
+class TestMergeParagraphSegments:
+    def _seg(self, text, x, y, w, h, wh=None, cw=None):
+        s = {
+            "text": text,
+            "bbox": [x, y, w, h],
+            "min_word_height": wh or h,
+            "method": "Tesseract",
+        }
+        if cw is not None:
+            s["char_width"] = cw
+        return s
+
+    def test_adjacent_lines_merge(self):
+        import loctran.extract as ext
+
+        segs = [
+            self._seg("Hello world", 10, 10, 200, 20, wh=18),
+            self._seg("this is line two", 10, 32, 200, 20, wh=18),
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 1
+        assert "Hello world" in result[0]["text"]
+        assert "this is line two" in result[0]["text"]
+        assert result[0]["bbox"][3] > 30
+
+    def test_different_font_sizes_stay_separate(self):
+        import loctran.extract as ext
+
+        segs = [
+            self._seg("Big Title", 10, 10, 200, 40, wh=38),
+            self._seg("small body text", 10, 55, 200, 15, wh=13),
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 2
+
+    def test_distant_lines_stay_separate(self):
+        import loctran.extract as ext
+
+        segs = [
+            self._seg("Line one", 10, 10, 200, 20, wh=18),
+            self._seg("Line far below", 10, 200, 200, 20, wh=18),
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 2
+
+    def test_different_columns_stay_separate(self):
+        import loctran.extract as ext
+
+        segs = [
+            self._seg("Left col", 10, 10, 100, 20, wh=18),
+            self._seg("Right col", 400, 12, 100, 20, wh=18),
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 2
+
+    def test_three_lines_merge(self):
+        import loctran.extract as ext
+
+        segs = [
+            self._seg("Line 1", 10, 10, 200, 18, wh=16),
+            self._seg("Line 2", 10, 30, 200, 18, wh=16),
+            self._seg("Line 3", 10, 50, 200, 18, wh=16),
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 1
+        assert "Line 1 Line 2 Line 3" == result[0]["text"]
+
+    def test_char_width_averaged(self):
+        import loctran.extract as ext
+
+        segs = [
+            self._seg("A", 10, 10, 200, 18, wh=16, cw=8.0),
+            self._seg("B", 10, 30, 200, 18, wh=16, cw=10.0),
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert result[0]["char_width"] == pytest.approx(9.0)
+
+    def test_no_bbox_segments_preserved(self):
+        import loctran.extract as ext
+
+        segs = [
+            {
+                "text": "no bbox",
+                "bbox": None,
+                "min_word_height": None,
+                "method": "AI OCR (Page)",
+            },
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 1
+        assert result[0]["text"] == "no bbox"
+
+    def test_single_segment_unchanged(self):
+        import loctran.extract as ext
+
+        segs = [self._seg("Solo", 10, 10, 200, 20, wh=18)]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 1
+
+
 class TestProcessTextFile:
     def test_creates_input_data_json(self, tmp_path):
         import loctran.extract as ext

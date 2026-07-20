@@ -904,6 +904,54 @@ class TestModelPolicyCoverage:
         assert state["warning"] is not None
         assert "too large" in state["warning"]
 
+    def test_ensure_startup_normalizes_tags(self):
+        """Models listed as 'name:latest' should match required 'name'."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from loctran.model_policy import ensure_startup_model
+
+        mock_ollama = MagicMock()
+        mock_ollama.list.return_value = SimpleNamespace(
+            models=[
+                SimpleNamespace(model="glm-ocr:latest"),
+                SimpleNamespace(model="translategemma:4b"),
+            ]
+        )
+        with (
+            patch("loctran.model_policy._get_ollama", return_value=mock_ollama),
+            patch("loctran.model_policy.estimate_system_ram_gb", return_value=16.0),
+        ):
+            state = ensure_startup_model(
+                translation_model="translategemma:4b",
+                ocr_model="glm-ocr",
+            )
+        assert state["missing_models"] == []
+        assert state["verified"] is True
+
+    def test_ensure_startup_ocr_optional(self):
+        """When ocr_model is empty, only translation model is required."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from loctran.model_policy import ensure_startup_model
+
+        mock_ollama = MagicMock()
+        mock_ollama.list.return_value = SimpleNamespace(
+            models=[SimpleNamespace(model="translategemma:4b")]
+        )
+        with (
+            patch("loctran.model_policy._get_ollama", return_value=mock_ollama),
+            patch("loctran.model_policy.estimate_system_ram_gb", return_value=16.0),
+        ):
+            state = ensure_startup_model(
+                translation_model="translategemma:4b",
+                ocr_model="",
+            )
+        assert state["missing_models"] == []
+        assert state["verified"] is True
+        assert "glm-ocr" not in state["required_models"]
+
 
 # ------------------------------------------------------------------
 # translate.py: JSON extraction + redistribute edge cases

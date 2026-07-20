@@ -238,7 +238,11 @@ class TestRunConversion:
             },
         ):
             srv.run_conversion(
-                job_id, f, "in.pdf", "1MB", tmp_path,
+                job_id,
+                f,
+                "in.pdf",
+                "1MB",
+                tmp_path,
             )
         assert srv.jobs[job_id]["status"] == "completed"
 
@@ -262,7 +266,11 @@ class TestRunConversion:
             side_effect=RuntimeError("bad compress"),
         ):
             srv.run_conversion(
-                job_id, f, "in.pdf", "1MB", tmp_path,
+                job_id,
+                f,
+                "in.pdf",
+                "1MB",
+                tmp_path,
             )
         assert srv.jobs[job_id]["status"] == "failed"
 
@@ -600,10 +608,14 @@ class TestChooseFolderFixedPrompt:
             captured["cmd"] = cmd
             return b"/Users/test/Documents\n"
 
-        with patch("loctran.server.store.init_db"), patch(
-            "loctran.server.store.list_active_jobs", return_value=[]
-        ), patch("loctran.server.server.check_ai_engine"), patch(
-            "loctran.server.server.subprocess.check_output", side_effect=fake_check_output
+        with (
+            patch("loctran.server.store.init_db"),
+            patch("loctran.server.store.list_active_jobs", return_value=[]),
+            patch("loctran.server.server.check_ai_engine"),
+            patch(
+                "loctran.server.server.subprocess.check_output",
+                side_effect=fake_check_output,
+            ),
         ):
             from fastapi.testclient import TestClient
 

@@ -333,6 +333,73 @@ def _preprocess_image(img: Any) -> Any:
         return img
 
 
+def _merge_paragraph_segments(
+    segments: "list[dict[str, Any]]",
+) -> "list[dict[str, Any]]":
+    """Merge adjacent same-style line segments into multi-line paragraph segments.
+
+    Two segments are merged when they have similar font size, are vertically
+    adjacent (gap < 1.5× word height), and overlap horizontally (>40% of the
+    narrower segment).
+    """
+    with_bbox = [s for s in segments if s.get("bbox")]
+    without_bbox = [s for s in segments if not s.get("bbox")]
+    if len(with_bbox) < 2:
+        return segments
+
+    with_bbox.sort(key=lambda s: (s["bbox"][1], s["bbox"][0]))
+
+    def _can_merge(a: "dict[str, Any]", b: "dict[str, Any]") -> bool:
+        ha = a.get("min_word_height") or a["bbox"][3]
+        hb = b.get("min_word_height") or b["bbox"][3]
+        if ha <= 0 or hb <= 0:
+            return False
+        if min(ha, hb) / max(ha, hb) < 0.7:
+            return False
+        a_bottom = a["bbox"][1] + a["bbox"][3]
+        gap = b["bbox"][1] - a_bottom
+        avg_h = (ha + hb) / 2
+        if gap > avg_h * 1.5 or gap < -avg_h * 0.3:
+            return False
+        a_left, a_right = a["bbox"][0], a["bbox"][0] + a["bbox"][2]
+        b_left, b_right = b["bbox"][0], b["bbox"][0] + b["bbox"][2]
+        overlap = min(a_right, b_right) - max(a_left, b_left)
+        min_w = min(a["bbox"][2], b["bbox"][2])
+        if min_w <= 0 or overlap / min_w < 0.4:
+            return False
+        return True
+
+    def _do_merge(a: "dict[str, Any]", b: "dict[str, Any]") -> "dict[str, Any]":
+        x0 = min(a["bbox"][0], b["bbox"][0])
+        y0 = min(a["bbox"][1], b["bbox"][1])
+        x1 = max(a["bbox"][0] + a["bbox"][2], b["bbox"][0] + b["bbox"][2])
+        y1 = max(a["bbox"][1] + a["bbox"][3], b["bbox"][1] + b["bbox"][3])
+        ha = a.get("min_word_height") or a["bbox"][3]
+        hb = b.get("min_word_height") or b["bbox"][3]
+        cw_a, cw_b = a.get("char_width"), b.get("char_width")
+        merged: dict[str, Any] = {
+            "text": a["text"] + " " + b["text"],
+            "bbox": [x0, y0, x1 - x0, y1 - y0],
+            "min_word_height": (ha + hb) / 2,
+            "method": a.get("method", b.get("method", "Tesseract")),
+        }
+        if cw_a and cw_b:
+            merged["char_width"] = (cw_a + cw_b) / 2
+        elif cw_a or cw_b:
+            merged["char_width"] = cw_a or cw_b
+        if a.get("ai_ocr_fallback") or b.get("ai_ocr_fallback"):
+            merged["ai_ocr_fallback"] = True
+        return merged
+
+    result = [with_bbox[0]]
+    for seg in with_bbox[1:]:
+        if _can_merge(result[-1], seg):
+            result[-1] = _do_merge(result[-1], seg)
+        else:
+            result.append(seg)
+    return result + without_bbox
+
+
 def _median_char_width(words: "list[dict[str, Any]]") -> float | None:
     """Return median per-character width in pixels from word bboxes."""
     cw = [w["width"] / len(w["text"]) for w in words if len(w.get("text", "")) > 0]
@@ -925,6 +992,12 @@ def process_page(
                     item["full_text"] = ai_text
             except Exception as e:
                 logger.warning("Full-page AI OCR fallback failed page %d: %s", i, e)
+
+        if item["segments"]:
+            item["segments"] = _merge_paragraph_segments(item["segments"])
+            item["full_text"] = "\n".join(
+                s["text"] for s in item["segments"] if s.get("text")
+            )
 
     except Exception as e:
         item["full_text"] = f"Error: {e}"

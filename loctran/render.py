@@ -131,7 +131,10 @@ def get_overlay_html(
         else:
             width_cand = width_p / (_CHAR_WIDTH_FACTOR * orig_n_chars)
 
-        font_cqw = min(height_cand, width_cand)
+        if is_translated:
+            font_cqw = height_cand
+        else:
+            font_cqw = min(height_cand, width_cand)
         font_size_expr = f"{font_cqw:.4f}cqw"
 
         # F2.4: translations always wrap (text may be longer than original)
@@ -160,13 +163,14 @@ def get_overlay_html(
                 "color: #744210;"
             )
 
+        v_align = "flex-start" if is_translated else "center"
         parts.append(
             '  <div class="translated-box" style="'
             f"position: absolute; left: {left_p:.4f}%; top: {top_p:.4f}%; "
             f"width: {width_p:.4f}%; height: {height_p:.4f}%; "
             f"{box_style} "
             f"overflow: hidden; font-size: {font_size_expr}; "
-            "display: flex; align-items: center; justify-content: flex-start; "
+            f"display: flex; align-items: {v_align}; justify-content: flex-start; "
             f"text-align: left; padding: 0 1px; box-sizing: border-box; "
             f"line-height: 1.1; white-space: {white_space}; "
             f'font-family: {_FONT_STACK}; z-index: 10;" '

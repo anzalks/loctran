@@ -548,6 +548,7 @@ def check_ai_engine():
     startup_state = ensure_startup_model(
         default_model=SETTINGS.default_model,
         low_resource_model=SETTINGS.low_resource_model,
+        ocr_model="",
     )
     if startup_state.get("warning"):
         logger.warning("%s", startup_state["warning"])
