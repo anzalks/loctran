@@ -40,7 +40,7 @@ converted_html/
 converted_images/
 translation_report.html
 *.html
-!app/static/*.html
+!loctran/server/static/*.html
 !outputs/**/*.html
 
 # User-specific translation/conversion data directories
@@ -69,6 +69,13 @@ rules.md
 **/copilot-instructions.md
 **/.github/copilot-instructions.md
 
+
+# Test / coverage / linter caches
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # IDEs
 .vscode/
