@@ -535,8 +535,8 @@ class TestGetOverlayHtml:
         html = get_overlay_html(800, 600, "images/p1.png", [])
         assert 'loading="lazy"' in html
 
-    def test_width_based_font_size_for_long_translation(self):
-        """F2.2: very long translation must produce a smaller font than height-only."""
+    def test_font_size_based_on_original_text(self):
+        """F2.2: font size derived from original text, not translation length."""
         from loctran.render import get_overlay_html as _goh
 
         short_seg = {"bbox": [0, 0, 200, 20], "text": "Hi", "translation": "Hi"}
@@ -547,14 +547,14 @@ class TestGetOverlayHtml:
         }
         short_html = _goh(800, 600, "p.png", [short_seg])
         long_html = _goh(800, 600, "p.png", [long_seg])
-        # Font size value is embedded as "X.XXXXcqw"; long translation → smaller number
         import re
 
         def _first_font(h: str) -> float:
             m = re.search(r"font-size:\s*([\d.]+)cqw", h)
             return float(m.group(1)) if m else 999.0
 
-        assert _first_font(long_html) < _first_font(short_html)
+        assert _first_font(long_html) == _first_font(short_html)
+        assert "white-space: normal" in long_html
 
     def test_per_method_fudge_digital_vs_tesseract(self):
         """F2.5: Digital segments use a larger fudge factor than Tesseract."""

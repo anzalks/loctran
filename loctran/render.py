@@ -119,17 +119,23 @@ def get_overlay_html(
         # Height-based font-size candidate (cqw = % of container width)
         height_cand = (effective_height_p / aspect_ratio) * fudge
 
-        # F2.2: width-based font-size candidate
+        # F2.2: width-based font-size candidate — always based on ORIGINAL text
+        # so translated text (which may be longer) doesn't shrink the font
         display_text = translation if is_translated else original_text
-        n_chars = max(1, len(display_text))
-        width_cand = width_p / (_CHAR_WIDTH_FACTOR * n_chars)
+        orig_n_chars = (
+            max(1, len(original_text)) if original_text else max(1, len(display_text))
+        )
+        width_cand = width_p / (_CHAR_WIDTH_FACTOR * orig_n_chars)
 
         font_cqw = min(height_cand, width_cand)
         font_size_expr = f"{font_cqw:.4f}cqw"
 
-        # F2.4: allow wrapping when box is tall enough for multiple lines
-        box_h_cqw = height_p / aspect_ratio
-        white_space = "normal" if box_h_cqw > 1.8 * font_cqw else "nowrap"
+        # F2.4: translations always wrap (text may be longer than original)
+        white_space = (
+            "normal"
+            if is_translated
+            else ("normal" if (height_p / aspect_ratio) > 1.8 * font_cqw else "nowrap")
+        )
 
         # F2.7: background / text colour sampled from image
         if img_path is not None:

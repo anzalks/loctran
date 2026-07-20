@@ -136,6 +136,7 @@ _pending_shutdown_task: asyncio.Task[None] | None = None
 _server_instance: uvicorn.Server | None = None
 _signal_handlers_installed = False
 _pull_status: dict[str, str] = {}  # F4.19: shared model pull progress
+_model_pull_status: dict[str, dict] = {}  # per-model pull tracking
 
 # F4.5: concurrency control
 _JOB_SEMAPHORE = threading.Semaphore(2)
@@ -163,6 +164,36 @@ def _cleanup_stale_uploads(max_age_seconds: int = 86400) -> None:
 
 
 # --- Background Tasks ---
+
+
+def _report_ocr_fallbacks(doc_dir, job_id, update_progress):
+    """Check extracted data for AI OCR fallbacks and report to the user."""
+    try:
+        import json as _json
+
+        json_path = doc_dir / "input_data.json"
+        if not json_path.exists():
+            return
+        data = _json.loads(json_path.read_text(encoding="utf-8"))
+        fallback_count = 0
+        total_ai = 0
+        for slide in data:
+            for seg in slide.get("segments", []):
+                if seg.get("ai_ocr_fallback"):
+                    fallback_count += 1
+                if seg.get("method", "").startswith("AI OCR"):
+                    total_ai += 1
+        if fallback_count > 0:
+            msg = (
+                f"AI OCR: {total_ai} segments enhanced, "
+                f"{fallback_count} fell back to Tesseract "
+                "(model may be unavailable)"
+            )
+            update_progress(msg, 48)
+            if job_id in jobs:
+                jobs[job_id]["ocr_fallback_count"] = fallback_count
+    except Exception:
+        pass
 
 
 def run_pipeline(
@@ -222,6 +253,10 @@ def run_pipeline(
                 raise Exception("Extraction failed to create output directory")
 
             jobs[job_id]["result_path"] = str(doc_dir)
+
+            # Report AI OCR fallback if it occurred
+            if use_ai_ocr:
+                _report_ocr_fallbacks(doc_dir, job_id, update_progress)
 
             # F4.5: check cancel between stages
             if job_id in _cancel_requested:
@@ -494,17 +529,41 @@ def _start_ollama_if_needed() -> None:
 def check_ai_engine():
     """Check Ollama connection in background; update _pull_status (F4.19)."""
     _pull_status["status"] = "checking"
+    _pull_status["detail"] = "Connecting to Ollama..."
     _start_ollama_if_needed()
+
+    try:
+        import ollama as _ollama_mod
+
+        _ollama_mod.list()
+        _pull_status["ollama_ok"] = "true"
+    except Exception:
+        _pull_status["status"] = "ollama_missing"
+        _pull_status["detail"] = "Ollama is not running"
+        _pull_status["ollama_ok"] = "false"
+        return
+
     _pull_status["status"] = "ensuring_model"
+    _pull_status["detail"] = "Checking models..."
     startup_state = ensure_startup_model(
         default_model=SETTINGS.default_model,
         low_resource_model=SETTINGS.low_resource_model,
     )
     if startup_state.get("warning"):
         logger.warning("%s", startup_state["warning"])
-    if startup_state.get("pulled"):
-        logger.info("Pulled startup model: %s", startup_state.get("selected_model"))
-    _pull_status["status"] = "ready"
+    if startup_state.get("pulled_models"):
+        for m in startup_state["pulled_models"]:
+            logger.info("Pulled startup model: %s", m)
+
+    still_missing = startup_state.get("missing_models", [])
+    if still_missing:
+        _pull_status["status"] = "models_missing"
+        _pull_status["detail"] = f"Missing: {', '.join(still_missing)}"
+        _pull_status["missing"] = ",".join(still_missing)
+    else:
+        _pull_status["status"] = "ready"
+        _pull_status["detail"] = "All models ready"
+
     _pull_status["model"] = startup_state.get("selected_model", "")
 
 
@@ -975,6 +1034,82 @@ def get_all_models(role: Optional[str] = None):
     except Exception as e:
         logger.error(f"Failed to list Ollama models: {e}")
         return {"models": []}
+
+
+@app.get("/api/ollama-status")
+def get_ollama_status():
+    """Return granular Ollama + model readiness for the UI banner."""
+    return dict(_pull_status)
+
+
+@app.post("/api/pull-model")
+async def pull_model_endpoint(request: Request):
+    """Pull a model from Ollama on demand (triggered by the UI)."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON body")
+
+    model_name = body.get("model", "").strip()
+    if not model_name:
+        raise HTTPException(400, "Missing 'model' field")
+    if not re.match(r"^[\w.:/\-]+$", model_name):
+        raise HTTPException(400, "Invalid model name")
+
+    if model_name in _model_pull_status:
+        st = _model_pull_status[model_name].get("status")
+        if st == "pulling":
+            return _model_pull_status[model_name]
+
+    _model_pull_status[model_name] = {
+        "status": "pulling",
+        "model": model_name,
+        "detail": f"Pulling {model_name}...",
+    }
+
+    def _do_pull():
+        try:
+            from loctran.model_policy import pull_model
+
+            ok = pull_model(model_name)
+            if ok:
+                _model_pull_status[model_name] = {
+                    "status": "done",
+                    "model": model_name,
+                    "detail": f"{model_name} ready",
+                }
+                missing = _pull_status.get("missing", "")
+                remaining = [m for m in missing.split(",") if m and m != model_name]
+                if remaining:
+                    _pull_status["missing"] = ",".join(remaining)
+                    _pull_status["detail"] = f"Missing: {', '.join(remaining)}"
+                else:
+                    _pull_status.pop("missing", None)
+                    _pull_status["status"] = "ready"
+                    _pull_status["detail"] = "All models ready"
+            else:
+                _model_pull_status[model_name] = {
+                    "status": "failed",
+                    "model": model_name,
+                    "detail": f"Failed to pull {model_name}",
+                }
+        except Exception as exc:
+            _model_pull_status[model_name] = {
+                "status": "failed",
+                "model": model_name,
+                "detail": str(exc),
+            }
+
+    threading.Thread(target=_do_pull, daemon=True, name=f"pull-{model_name}").start()
+    return _model_pull_status[model_name]
+
+
+@app.get("/api/pull-status/{model_name:path}")
+def get_pull_status(model_name: str):
+    """Poll the pull status for a specific model."""
+    if model_name in _model_pull_status:
+        return _model_pull_status[model_name]
+    return {"status": "unknown", "model": model_name}
 
 
 # --- Secure File Serving ---

@@ -469,7 +469,7 @@ def _redistribute_translation(group: list[dict[str, Any]], translation: str) -> 
             s["translation"] = " ".join(words[word_pos:end])
             word_pos = end
         if not s.get("translation", "").strip():
-            s["translation"] = s.get("text", "")
+            s["translation"] = ""
 
 
 # ---------------------------------------------------------------------------
@@ -660,8 +660,11 @@ def process_folder(
             "    img { max-width:100%; border-radius:4px; }\n"
             "    .translated-box:hover {\n"
             "      z-index:100 !important; overflow:visible !important;\n"
-            "      height:auto !important; background:#fffff0 !important;\n"
-            "      outline:2px solid #4299e1 !important; border-radius:2px;\n"
+            "      height:auto !important;\n"
+            "      background:#fffff0 !important;\n"
+            "      color:#1a1a2e !important;\n"
+            "      outline:2px solid #4299e1 !important;\n"
+            "      border-radius:2px;\n"
             "    }\n"
             "    .text-original {\n"
             "      color:#2d3748; font-size:0.95rem; line-height:1.75;"
@@ -805,25 +808,33 @@ def process_folder(
                         sample = " ".join(s["text"] for s in segments_to_trans[:5])[
                             :500
                         ]
-                        try:
-                            from langdetect import (  # type: ignore
-                                DetectorFactory,
-                                detect as _detect,
-                            )
-
-                            DetectorFactory.seed = 0
-                            src_iso = _detect(sample)
-                            if src_iso[:2] == target_iso[:2]:
-                                same_lang = True
-                                logger.info(
-                                    "Slide %d: source lang '%s' matches target"
-                                    " '%s' — copying without translation.",
-                                    slide_num,
-                                    src_iso,
-                                    target_iso,
+                        if len(sample.strip()) >= 50:
+                            try:
+                                from langdetect import (  # type: ignore
+                                    DetectorFactory,
+                                    detect_langs as _detect_langs,
                                 )
-                        except Exception:
-                            pass
+
+                                DetectorFactory.seed = 0
+                                langs = _detect_langs(sample)
+                                if (
+                                    langs
+                                    and langs[0].prob > 0.8
+                                    and langs[0].lang[:2] == target_iso[:2]
+                                ):
+                                    same_lang = True
+                                    logger.info(
+                                        "Slide %d: source lang"
+                                        " '%s' (%.0f%%) matches"
+                                        " target '%s' — copying"
+                                        " without translation.",
+                                        slide_num,
+                                        langs[0].lang,
+                                        langs[0].prob * 100,
+                                        target_iso,
+                                    )
+                            except Exception:
+                                pass
 
                     if same_lang:
                         for s in segments_to_trans:

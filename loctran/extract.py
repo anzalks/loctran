@@ -362,6 +362,7 @@ def process_individual_segment(
         bbox = [min_x, y1, max_x - min_x, int(med_height * 1.5)]
     full_text = " ".join(w["text"] for w in word_list)
     method = "Dual-Pass OCR"
+    ai_ocr_fallback = False
     temp_crop_path: str | None = None
     if use_ai and bbox[2] > 20 and bbox[3] > 10:
         try:  # F1.15: try/finally guarantees temp file cleanup
@@ -375,8 +376,11 @@ def process_individual_segment(
             if ai_text:
                 full_text = ai_text
                 method = "AI OCR (Segment)"
+            else:
+                ai_ocr_fallback = True
         except Exception as e:
             logger.debug("AI Segment failed: %s", e)
+            ai_ocr_fallback = True
         finally:
             if temp_crop_path and os.path.exists(temp_crop_path):
                 os.remove(temp_crop_path)
@@ -387,9 +391,15 @@ def process_individual_segment(
         med_wh = sorted_h[len(sorted_h) // 2]
     else:
         med_wh = bbox[3]
-    segments.append(
-        {"text": full_text, "bbox": bbox, "min_word_height": med_wh, "method": method}
-    )
+    seg: dict[str, Any] = {
+        "text": full_text,
+        "bbox": bbox,
+        "min_word_height": med_wh,
+        "method": method,
+    }
+    if ai_ocr_fallback:
+        seg["ai_ocr_fallback"] = True
+    segments.append(seg)
 
 
 def merge_words(

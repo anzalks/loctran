@@ -99,6 +99,12 @@
 
             <!-- Translator Specific Controls -->
             <div id="translator-controls" class="controls">
+                <!-- Ollama status banner -->
+                <div id="ollama-status" class="ollama-status-banner checking" style="display: none;">
+                    <span class="status-icon"></span>
+                    <span class="status-text"></span>
+                </div>
+
                 <div id="startup-warning-banner" class="startup-warning-banner" style="display: none; grid-column: 1 / -1;">
                     <div>
                         <strong>Large model warning</strong>
@@ -309,6 +315,7 @@
                 <div class="progress-bar-fill" id="progress-fill"></div>
             </div>
             <div class="status-text" id="status-text">Initializing...</div>
+            <div id="ocr-fallback-notice" class="ocr-fallback-notice" style="display:none;"></div>
             <!-- F5.10: Cancel button -->
             <button id="cancel-btn" class="btn-cancel">Cancel</button>
         </div>
@@ -401,6 +408,8 @@
             startupWarningBanner.style.display = 'none';
         });
 
+        document.getElementById('translate-model').addEventListener('change', updateStartBtn);
+
         startupInfoPromise.then((si) => {
             if (si?.large_model_warning && !startupWarningDismissed) startupWarningBanner.style.display = 'flex';
         });
@@ -418,8 +427,14 @@
             fileNameDisplay.textContent = '';
             fileNameDisplay.style.display = 'none';
             startBtn.disabled = true;
+            startBtn.title = '';
             fileInput.value = '';
             hideError();
+            if (ollamaStatusInterval) {
+                clearInterval(ollamaStatusInterval);
+                ollamaStatusInterval = null;
+            }
+            if (ollamaStatusEl) ollamaStatusEl.style.display = 'none';
         }
 
         function navigateTo(mode) {
@@ -451,12 +466,144 @@
                     transControls.style.display = 'grid';
                     convControls.style.display = 'none';
                     loadModels();
+                    pollOllamaStatus();
                 } else {
                     title.textContent = "PDF Converter";
                     transControls.style.display = 'none';
                     convControls.style.display = 'grid';
                 }
                 startBtn.textContent = getBtnLabel(); // F5.7
+            }
+        }
+
+        // Ollama status banner
+        const ollamaStatusEl = document.getElementById('ollama-status');
+        let ollamaStatusInterval = null;
+        let ollamaReady = false;
+
+        function updateStatusBanner(state, detail, extra) {
+            if (!ollamaStatusEl) return;
+            ollamaStatusEl.style.display = 'flex';
+            ollamaStatusEl.className = 'ollama-status-banner';
+
+            let icon = '';
+            let html = '';
+
+            switch (state) {
+                case 'checking':
+                    ollamaStatusEl.classList.add('checking');
+                    icon = '<span class="status-dot pulsing" style="background:#3182ce;"></span>';
+                    html = detail || 'Connecting to Ollama...';
+                    break;
+                case 'ensuring_model':
+                    ollamaStatusEl.classList.add('checking');
+                    icon = '<span class="status-dot pulsing" style="background:#3182ce;"></span>';
+                    html = detail || 'Checking models...';
+                    break;
+                case 'ollama_missing':
+                    ollamaStatusEl.classList.add('error');
+                    icon = '&#10060;';
+                    html = 'Ollama is not running. <a href="https://ollama.com/download" target="_blank" '
+                        + 'style="color:inherit;font-weight:600;">Install Ollama</a> and start it, then reload.';
+                    ollamaReady = false;
+                    updateStartBtn();
+                    break;
+                case 'models_missing':
+                    ollamaStatusEl.classList.add('warning');
+                    icon = '&#9888;&#65039;';
+                    const missing = (extra || detail || '').replace('Missing: ', '');
+                    const models = missing.split(',').map(m => m.trim()).filter(Boolean);
+                    let btns = models.map(m =>
+                        `<button class="pull-btn" onclick="pullModel('${m}', this)">Pull ${m}</button>`
+                    ).join(' ');
+                    html = `Models not found: <strong>${missing}</strong> ${btns}`;
+                    ollamaReady = false;
+                    updateStartBtn();
+                    break;
+                case 'ready':
+                    ollamaStatusEl.classList.add('ready');
+                    icon = '&#9989;';
+                    html = 'All models ready';
+                    ollamaReady = true;
+                    updateStartBtn();
+                    setTimeout(() => {
+                        ollamaStatusEl.style.display = 'none';
+                    }, 3000);
+                    break;
+                default:
+                    ollamaStatusEl.classList.add('checking');
+                    icon = '<span class="status-dot pulsing" style="background:#a0aec0;"></span>';
+                    html = detail || 'Initializing...';
+            }
+            ollamaStatusEl.querySelector('.status-icon').innerHTML = icon;
+            ollamaStatusEl.querySelector('.status-text').innerHTML = html;
+        }
+
+        function pollOllamaStatus() {
+            if (ollamaStatusInterval) return;
+            updateStatusBanner('checking', 'Connecting to Ollama...');
+            ollamaStatusInterval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/ollama-status');
+                    const data = await res.json();
+                    updateStatusBanner(data.status, data.detail, data.missing);
+                    if (data.status === 'ready' || data.status === 'ollama_missing') {
+                        clearInterval(ollamaStatusInterval);
+                        ollamaStatusInterval = null;
+                    }
+                } catch (e) {
+                    console.warn('[ollama-status] poll failed:', e);
+                }
+            }, 1500);
+        }
+
+        async function pullModel(modelName, btn) {
+            if (btn) { btn.disabled = true; btn.textContent = 'Pulling...'; }
+            try {
+                await fetch('/api/pull-model', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: modelName }),
+                });
+                // Poll pull status
+                const pullInterval = setInterval(async () => {
+                    try {
+                        const res = await fetch(`/api/pull-status/${encodeURIComponent(modelName)}`);
+                        const data = await res.json();
+                        if (data.status === 'done') {
+                            clearInterval(pullInterval);
+                            if (btn) { btn.textContent = 'Done!'; }
+                            loadModels();
+                            // Re-check overall status
+                            const sr = await fetch('/api/ollama-status');
+                            const sd = await sr.json();
+                            updateStatusBanner(sd.status, sd.detail, sd.missing);
+                        } else if (data.status === 'failed') {
+                            clearInterval(pullInterval);
+                            if (btn) { btn.disabled = false; btn.textContent = `Retry ${modelName}`; }
+                            updateStatusBanner('warning', data.detail || `Failed to pull ${modelName}`);
+                        }
+                    } catch (e) {
+                        console.warn('[pull-status] poll error:', e);
+                    }
+                }, 2000);
+            } catch (e) {
+                console.error('[pullModel] failed:', e);
+                if (btn) { btn.disabled = false; btn.textContent = `Retry ${modelName}`; }
+            }
+        }
+
+        // Smart Start button: disable when no valid model selected
+        function updateStartBtn() {
+            if (!selectedFile) { startBtn.disabled = true; return; }
+            if (currentMode !== 'translator') { startBtn.disabled = false; return; }
+            const translateSel = document.getElementById('translate-model');
+            const val = translateSel ? translateSel.value : '';
+            startBtn.disabled = !val;
+            if (!val) {
+                startBtn.title = 'No translation model available';
+            } else {
+                startBtn.title = '';
             }
         }
 
@@ -477,11 +624,11 @@
 
                 translateSel.innerHTML = transModels.length
                     ? transModels.map(m => `<option value="${m.name}">${m.name}</option>`).join('')
-                    : '<option value="">No translation models found — is Ollama running?</option>';
+                    : '<option value="">No translation models</option>';
 
                 visionSel.innerHTML = visionModels.length
                     ? visionModels.map(m => `<option value="${m.name}">${m.name}</option>`).join('')
-                    : '<option value="">No vision models found</option>';
+                    : '<option value="">No vision models</option>';
 
                 const si = await startupInfoPromise;
                 const rec = si?.recommended_model || '';
@@ -491,10 +638,13 @@
                 if (vDef) visionSel.value = vDef.name;
 
                 if (si?.large_model_warning && !startupWarningDismissed) startupWarningBanner.style.display = 'flex';
+
+                updateStartBtn();
             } catch (e) {
                 console.error('[loadModels] failed:', e);
                 translateSel.innerHTML = '<option value="">Error loading models</option>';
                 visionSel.innerHTML = '<option value="">Error loading models</option>';
+                updateStartBtn();
             }
         }
 
@@ -532,7 +682,7 @@
             selectedFile = file;
             fileNameDisplay.textContent = `Selected: ${file.name}`;
             fileNameDisplay.style.display = 'block';
-            startBtn.disabled = false;
+            updateStartBtn();
         }
 
         // F5.6: choose_folder with fallback to default output folder
@@ -592,6 +742,9 @@
             hideError();
             startBtn.disabled = true;
             startBtn.textContent = 'Uploading...';
+
+            // Reset OCR fallback notice
+            document.getElementById('ocr-fallback-notice').style.display = 'none';
 
             try {
                 // Step 1: Upload
@@ -694,6 +847,13 @@
 
                     document.getElementById('progress-fill').style.width = `${data.progress ?? 0}%`;
                     document.getElementById('status-text').textContent = data.message;
+
+                    // Show OCR fallback notice if applicable
+                    const ocrNotice = document.getElementById('ocr-fallback-notice');
+                    if (data.ocr_fallback_count && data.ocr_fallback_count > 0) {
+                        ocrNotice.textContent = `${data.ocr_fallback_count} segment(s) used Tesseract fallback — AI OCR model may be unavailable`;
+                        ocrNotice.style.display = 'block';
+                    }
 
                     if (data.status === 'completed') {
                         clearInterval(activeInterval); activeInterval = null;
