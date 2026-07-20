@@ -213,6 +213,7 @@ class TestCompressFile:
         fake_page.render.return_value = fake_bitmap
         fake_doc = MagicMock()
         fake_doc.__getitem__ = MagicMock(return_value=fake_page)
+        fake_doc.__len__ = MagicMock(return_value=1)
 
         with patch("loctran.server.compress.pdfium.PdfDocument", return_value=fake_doc):
             from loctran.server.compress import compress_file
