@@ -5,6 +5,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/) and this 
 
 ## [Unreleased]
 
+### 2026-07-20 — Full audit fixes (F1.1–F7.9)
+
+#### Fixed
+- **Extraction / OCR (F1.x)**: page-range clamp, DPI cap, empty-text guard, timeout, retry on OCR failure, correct language mapping for Tesseract.
+- **Overlay rendering (F2.x)**: font fallback chain, bounding-box clamp, alpha-channel handling for PNG overlays.
+- **Translation layer (F3.x)**: streaming chunk assembly, source-language pass-through, LLM timeout propagation.
+- **Server & lifecycle (F4.x)**: WAL-mode SQLite with threading lock, stale-upload cleanup, semaphore-limited concurrency, cancel endpoint, AppleScript injection fix, sanitised file names, graceful shutdown grace period.
+- **Frontend UX (F5.x)**: inline error panel (replaces `alert()`), monotonic 0–100 % progress, role-filtered model lists, source-language selector, cancel button, 50 MB client-side size check.
+- **Compression (F6.x)**: image→PDF now writes real PDF; PNG output no longer saved as JPEG bytes; all PDF pages converted (zip when >1); best-effort fallback copies original when every attempt enlarges the file; `print` replaced with `logger`.
+- **Packaging & model policy (F7.x)**: removed unused deps (`fpdf`, `markdown`, `websockets`, `requests`); dead `ocr`/`server` extras removed; added `cv` extra for OpenCV; `.dockerignore` added; `OLLAMA_HOST` documented in Dockerfile; `normalize_model_tag` helper; `should_warn_large_model` now uses `size × 0.7 GiB` heuristic; `choose_startup_model` simplified.
+
 ### 2026-05-14
 - Migrated model stack to dual-model operation: OCR uses `glm-ocr`, translation uses `translategemma:4b`, with `translategemma:12b` documented as an optional quality tier.
 - Updated docs and diagnostics to require both OCR and translation models.
