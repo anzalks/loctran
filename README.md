@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/anzalks/loctran/actions/workflows/ci.yml/badge.svg)](https://github.com/anzalks/loctran/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/loctran)](https://pypi.org/project/loctran/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python](https://img.shields.io/pypi/pyversions/loctran)](https://pypi.org/project/loctran/)
 
 **Translate PDFs locally. No cloud. No API key. Just Ollama.**
@@ -179,8 +179,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, running tests, and
 
 ## License
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-Apache 2.0 — © 2026 Anzal K Shahul
+This project is dual-licensed:
+
+- **Open source** — [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). You may use, modify, and distribute Loctran under the AGPL, which requires that any modified version or networked service built on Loctran also be released under the AGPL with full source code.
+- **Commercial** — A proprietary license is available for organisations that cannot comply with the AGPL's copyleft obligations. Contact **anzal.ks@gmail.com** for terms.
+
+© 2026 Anzal K Shahul. All rights reserved.
 
 The recommended AI models (TranslateGemma, GLM-OCR) carry their own licenses. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for details.

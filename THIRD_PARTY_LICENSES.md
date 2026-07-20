@@ -1,8 +1,8 @@
 # Third-Party Licenses
 
-Loctran itself is released under the Apache 2.0 license. All Python
-dependencies use permissive licenses (MIT, BSD-3-Clause, Apache-2.0, or
-MPL-2.0).
+Loctran itself is dual-licensed under AGPL-3.0 (open source) and a
+commercial license. All Python dependencies use permissive licenses
+(MIT, BSD-3-Clause, Apache-2.0, or MPL-2.0).
 
 The AI models recommended for use with Loctran carry their own licenses,
 documented below.

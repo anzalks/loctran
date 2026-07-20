@@ -9,7 +9,7 @@ description = "Local-first document translation and conversion toolkit"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Anzal K. Shahul" }]
-license = "Apache-2.0"
+license = "AGPL-3.0-or-later"
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python :: 3",

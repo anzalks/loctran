@@ -2,6 +2,15 @@
 
 Thank you for your interest in contributing! Here's everything you need to get started.
 
+## Contributor License Agreement (CLA)
+
+By submitting a pull request you agree to the terms of the project's
+[Contributor License Agreement](CLA.md). In short, you grant the maintainer
+the right to relicense your contribution (including under a commercial
+license) while you retain copyright to your work. This is required because
+Loctran is dual-licensed (AGPL-3.0 + commercial). No separate signature is
+needed — your PR submission is your acceptance.
+
 ## Development setup
 
 ```bash
