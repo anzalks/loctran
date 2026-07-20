@@ -80,7 +80,7 @@ Generated for branch `fix/full-audit`. Each row maps an audit finding to the fil
 | F7.1 | `pyproject.toml` | Remove unused deps: `fpdf`, `markdown`, `websockets`, `requests` |
 | F7.2 | `pyproject.toml` | Drop dead `ocr` and `server` extras that duplicated main dependencies |
 | F7.3 | `Dockerfile`, `.dockerignore` | Add `.dockerignore`; document `OLLAMA_HOST` default in Dockerfile |
-| F7.4 | `pyproject.toml` | Add `cv` optional extra for `opencv-python-headless` |
+| F7.4 | `pyproject.toml` | Add `opencv-python-headless` to default dependencies |
 | F7.5 | `README.md` / `CHANGELOG.md` | Update CHANGELOG with full audit-fix summary entry |
 | F7.6 | `loctran/model_policy.py` | Add `normalize_model_tag(name)` that appends `:latest` when no tag is present |
 | F7.7 | `loctran/model_policy.py` | `should_warn_large_model` uses `size_b × 0.7 GiB > ram_gb` heuristic |

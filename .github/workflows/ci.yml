@@ -27,7 +27,7 @@ jobs:
       - name: Install package and tooling
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[test,cv]" ruff mypy build twine types-Pillow
+          pip install -e ".[test]" ruff mypy build twine types-Pillow
 
       - name: Lint & format check
         run: |

@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/) and this 
 - **Server & lifecycle (F4.x)**: WAL-mode SQLite with threading lock, stale-upload cleanup, semaphore-limited concurrency, cancel endpoint, AppleScript injection fix, sanitised file names, graceful shutdown grace period.
 - **Frontend UX (F5.x)**: inline error panel (replaces `alert()`), monotonic 0–100 % progress, role-filtered model lists, source-language selector, cancel button, 50 MB client-side size check.
 - **Compression (F6.x)**: image→PDF now writes real PDF; PNG output no longer saved as JPEG bytes; all PDF pages converted (zip when >1); best-effort fallback copies original when every attempt enlarges the file; `print` replaced with `logger`.
-- **Packaging & model policy (F7.x)**: removed unused deps (`fpdf`, `markdown`, `websockets`, `requests`); dead `ocr`/`server` extras removed; added `cv` extra for OpenCV; `.dockerignore` added; `OLLAMA_HOST` documented in Dockerfile; `normalize_model_tag` helper; `should_warn_large_model` now uses `size × 0.7 GiB` heuristic; `choose_startup_model` simplified.
+- **Packaging & model policy (F7.x)**: removed unused deps (`fpdf`, `markdown`, `websockets`, `requests`); dead `ocr`/`server` extras removed; `opencv-python-headless` added to default deps; `.dockerignore` added; `OLLAMA_HOST` documented in Dockerfile; `normalize_model_tag` helper; `should_warn_large_model` now uses `size × 0.7 GiB` heuristic; `choose_startup_model` simplified.
 
 ### 2026-05-14
 - Migrated model stack to dual-model operation: OCR uses `glm-ocr`, translation uses `translategemma:4b`, with `translategemma:12b` documented as an optional quality tier.

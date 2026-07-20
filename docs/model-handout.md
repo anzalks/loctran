@@ -6,7 +6,7 @@ Practical guide for choosing, pulling, and operating Loctran OCR and translation
 
 ```bash
 # Install Loctran
-pip install "loctran[ocr,server]"
+pip install loctran
 
 # Pull recommended default models
 ollama pull glm-ocr

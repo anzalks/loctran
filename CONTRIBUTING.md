@@ -7,7 +7,7 @@ Thank you for your interest in contributing! Here's everything you need to get s
 ```bash
 git clone https://github.com/anzalks/loctran.git
 cd loctran
-pip install -e ".[ocr,server,test]"
+pip install -e ".[test]"
 pip install ruff mypy pre-commit
 pre-commit install
 ```
@@ -65,6 +65,16 @@ mypy loctran/ --ignore-missing-imports
 ## Adding a language or model to the test matrix
 
 The CI matrix is in `.github/workflows/ci.yml`. To extend OS/Python coverage, update the `matrix.os` and `matrix.python-version` sections.
+
+## Updating README screenshots
+
+```bash
+pip install -e ".[dev]"
+python -m playwright install chromium
+make screenshots
+```
+
+This writes screenshots to `docs/screenshots/` using `scripts/capture_screenshots.py`.
 
 ## Questions?
 

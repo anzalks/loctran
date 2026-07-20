@@ -44,6 +44,7 @@ dependencies = [
   "psutil>=5.9.0",
   "pydantic>=2.0.0",
   "rich>=13.0.0",
+  "opencv-python-headless>=4.0.0",
 ]
 
 [project.urls]
@@ -51,9 +52,6 @@ Repository = "https://github.com/anzalks/loctran"
 "Bug Tracker" = "https://github.com/anzalks/loctran/issues"
 
 [project.optional-dependencies]
-cv = [
-  "opencv-python-headless>=4.0.0",
-]
 test = [
   "pytest>=7.0.0",
   "pytest-cov>=4.0.0",
