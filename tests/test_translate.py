@@ -430,7 +430,6 @@ class TestPhase3Regressions:
     def test_f3_10_cli_lang_help_says_target(self):
         """F3.10: --lang help text must say 'Target', not 'Source'."""
         import argparse
-        from loctran.translate import main
 
         # Capture the help text
         parser = argparse.ArgumentParser()

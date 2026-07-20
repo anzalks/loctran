@@ -108,3 +108,21 @@ class TestModelPolicy:
         assert data["ram_gb"] == 6.0
         assert data["large_model_warning"] is True
         assert "ollama_status" in data  # F4.19
+
+    def test_normalize_model_tag_adds_latest_when_no_tag(self):
+        from loctran.model_policy import normalize_model_tag
+
+        assert normalize_model_tag("qwen2.5") == "qwen2.5:latest"
+
+    def test_normalize_model_tag_leaves_tagged_name_unchanged(self):
+        from loctran.model_policy import normalize_model_tag
+
+        assert normalize_model_tag("qwen2.5:3b") == "qwen2.5:3b"
+
+    def test_should_warn_uses_ram_ratio(self):
+        from loctran.model_policy import should_warn_large_model
+
+        # 7B × 0.7 = 4.9 GiB > 4 GiB RAM → should warn
+        assert should_warn_large_model("qwen2.5:7b", 4.0) is True
+        # 7B × 0.7 = 4.9 GiB < 8 GiB RAM → no warn
+        assert should_warn_large_model("qwen2.5:7b", 8.0) is False
