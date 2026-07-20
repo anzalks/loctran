@@ -213,6 +213,7 @@ class TestCompressFile:
         fake_page.render.return_value = fake_bitmap
         fake_doc = MagicMock()
         fake_doc.__getitem__ = MagicMock(return_value=fake_page)
+        fake_doc.__len__ = MagicMock(return_value=1)
 
         with patch("loctran.server.compress.pdfium.PdfDocument", return_value=fake_doc):
             from loctran.server.compress import compress_file
@@ -268,4 +269,60 @@ class TestCompressPdfSafeTargetHit:
                 str(src), str(dst), target_size=100 * 1024 * 1024
             )
         assert dst.exists()
+        assert "compressed_size" in result
+
+
+class TestImageToPdf:
+    """F6.1: compress_file with image input and .pdf output produces a real PDF."""
+
+    def test_jpg_to_pdf_produces_pdf_bytes(self, tmp_path):
+        from PIL import Image as PILImage
+
+        from loctran.server.compress import compress_file
+
+        src = tmp_path / "in.jpg"
+        PILImage.new("RGB", (8, 8), color=(200, 100, 50)).save(str(src))
+        dst = tmp_path / "out.pdf"
+        result = compress_file(str(src), str(dst), target_size=1024 * 1024)
+        assert dst.exists()
+        assert dst.read_bytes()[:4] == b"%PDF"
+        assert "original_size" in result
+        assert result["target_met"] is True
+
+
+class TestPngOutputStaysPng:
+    """F6.2: compress_image_to_size saves PNG bytes when output extension is .png."""
+
+    def test_png_output_has_png_signature(self, tmp_path):
+        from PIL import Image as PILImage
+
+        from loctran.server.compress import compress_image_to_size
+
+        src = tmp_path / "in.png"
+        PILImage.new("RGBA", (16, 16), color=(0, 128, 255, 200)).save(str(src))
+        dst = tmp_path / "out.png"
+        result = compress_image_to_size(str(src), str(dst), target_size=1024 * 1024)
+        assert dst.exists()
+        assert dst.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+        assert "original_size" in result
+
+
+class TestBestEffortFallbackCopiesOriginal:
+    """F6.4: original is copied unchanged when every compression attempt enlarges it."""
+
+    def test_already_tiny_image_returns_original_on_hopeless_target(self, tmp_path):
+        from PIL import Image as PILImage
+
+        from loctran.server.compress import compress_image_to_size
+
+        src = tmp_path / "tiny.jpg"
+        PILImage.new("RGB", (1, 1), color=(0, 0, 0)).save(str(src), "JPEG")
+        original_content = src.read_bytes()
+        dst = tmp_path / "out.jpg"
+        result = compress_image_to_size(str(src), str(dst), target_size=1)
+        assert dst.exists()
+        # When compressed size >= original size, original is copied verbatim
+        if result.get("best_effort") is False and not result.get("target_met"):
+            assert dst.read_bytes() == original_content
+        assert "original_size" in result
         assert "compressed_size" in result

@@ -2,12 +2,21 @@
 
 Thank you for your interest in contributing! Here's everything you need to get started.
 
+## Contributor License Agreement (CLA)
+
+By submitting a pull request you agree to the terms of the project's
+[Contributor License Agreement](CLA.md). In short, you grant the maintainer
+the right to relicense your contribution (including under a commercial
+license) while you retain copyright to your work. This is required because
+Loctran is dual-licensed (AGPL-3.0 + commercial). No separate signature is
+needed — your PR submission is your acceptance.
+
 ## Development setup
 
 ```bash
 git clone https://github.com/anzalks/loctran.git
 cd loctran
-pip install -e ".[ocr,server,test]"
+pip install -e ".[test]"
 pip install ruff mypy pre-commit
 pre-commit install
 ```
@@ -65,6 +74,16 @@ mypy loctran/ --ignore-missing-imports
 ## Adding a language or model to the test matrix
 
 The CI matrix is in `.github/workflows/ci.yml`. To extend OS/Python coverage, update the `matrix.os` and `matrix.python-version` sections.
+
+## Updating README screenshots
+
+```bash
+pip install -e ".[dev]"
+python -m playwright install chromium
+make screenshots
+```
+
+This writes screenshots to `docs/screenshots/` using `scripts/capture_screenshots.py`.
 
 ## Questions?
 

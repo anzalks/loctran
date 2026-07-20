@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import traceback
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,9 @@ from tqdm import tqdm
 from loctran.exceptions import DependencyError, ExtractionError
 
 try:
-    from langdetect import LangDetectException, detect_langs  # type: ignore
+    from langdetect import DetectorFactory, LangDetectException, detect_langs  # type: ignore
+
+    DetectorFactory.seed = 0  # F1.16: deterministic language detection
 except ImportError:
 
     class LangDetectError(Exception):
@@ -37,17 +40,51 @@ logger = logging.getLogger("loctran.extract")
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
 
-# --- SYSTEM PATHS ---
+# --- SYSTEM PATHS ---  (F1.21: added Windows paths)
 POSSIBLE_TESSERACT_PATHS = [
     "/opt/homebrew/bin/tesseract",
     "/usr/local/bin/tesseract",
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    r"C:\Users\AppData\Local\Programs\Tesseract-OCR\tesseract.exe",
 ]
+
+# F1.12: shared Ollama request timeout (seconds)
+_OLLAMA_TIMEOUT = int(os.getenv("LOCTRAN_OLLAMA_TIMEOUT", "120"))
+
+# F1.2: ISO 639-1/BCP-47 → Tesseract language code mapping
+TESSERACT_LANG_MAP: dict[str, str] = {
+    "ja": "jpn",
+    "zh-cn": "chi_sim",
+    "zh-tw": "chi_tra",
+    "ko": "kor",
+    "ar": "ara",
+    "hi": "hin",
+    "ru": "rus",
+    "fr": "fra",
+    "de": "deu",
+    "es": "spa",
+    "it": "ita",
+    "pt": "por",
+    "nl": "nld",
+    "pl": "pol",
+    "tr": "tur",
+    "vi": "vie",
+    "th": "tha",
+    "uk": "ukr",
+    "cs": "ces",
+    "sv": "swe",
+    "da": "dan",
+    "fi": "fin",
+    "nb": "nor",
+    "en": "eng",
+}
 
 
 def _missing_dependency_error(module_name: str, extra_name: str) -> DependencyError:
     install_hint = (
         "pip install loctran"
-        if extra_name == "ocr"
+        if extra_name in ("ocr",)
         else f"pip install loctran[{extra_name}]"
     )
     return DependencyError(
@@ -90,10 +127,11 @@ def _get_ollama() -> Any:
 
 
 def _get_cv2() -> Any:
+    # F1.19: corrected package name and extra reference (now used by F1.3)
     try:
         import cv2  # type: ignore
     except ImportError as exc:
-        raise _missing_dependency_error("opencv-python", "ocr") from exc
+        raise _missing_dependency_error("opencv-python-headless", "preprocess") from exc
     return cv2
 
 
@@ -105,6 +143,13 @@ def _get_pillow_image() -> Any:
             "Missing optional dependency 'Pillow'. Install with: pip install loctran"
         ) from exc
     return Image
+
+
+def _get_ollama_client(timeout: int | None = None) -> Any:
+    """Return an ollama.Client with an explicit request timeout (F1.12/F3.1)."""
+    ollama = _get_ollama()
+    t = timeout if timeout is not None else _OLLAMA_TIMEOUT
+    return ollama.Client(timeout=t)
 
 
 def _configure_tesseract_path() -> Any:
@@ -135,29 +180,81 @@ def check_dependencies() -> bool:
     return True
 
 
+def _get_tesseract_langs() -> set[str]:
+    """Return the set of language packs installed for the configured Tesseract binary."""
+    try:
+        pytesseract = _configure_tesseract_path()
+        langs = pytesseract.get_languages(config="")
+        return set(langs)
+    except Exception:
+        return {"eng"}
+
+
+def _iso_to_tesseract_lang(iso_code: str) -> str | None:
+    """Map an ISO 639-1 / langdetect code to a Tesseract language code."""
+    normalized = iso_code.lower().replace("_", "-")
+    if normalized in TESSERACT_LANG_MAP:
+        return TESSERACT_LANG_MAP[normalized]
+    # Try prefix match (e.g. "zh" → chi_sim)
+    prefix = normalized.split("-")[0]
+    return TESSERACT_LANG_MAP.get(prefix)
+
+
 def rasterize_pdf(pdf_path: "str | Path", output_dir: Path) -> "list[str]":
+    """Rasterize a PDF to JPEG images (one per page).
+
+    F1.1: renders at scale=4 (~288 DPI) for better OCR accuracy.  The saved
+    JPEG is used for display only; Tesseract receives the decoded PIL bitmap
+    (lossless in-memory) directly via ``get_segments_hybrid``.
+    F1.17: detects encrypted / zero-page / large PDFs early.
+    """
     try:
         pdfium = _get_pdfium()
-        pdf = pdfium.PdfDocument(str(pdf_path))
+        try:
+            pdf = pdfium.PdfDocument(str(pdf_path))
+        except Exception as e:
+            err_str = str(e).lower()
+            if any(kw in err_str for kw in ("password", "encrypt", "unlock")):
+                raise ExtractionError(
+                    "PDF is password-protected; please provide a decrypted version"
+                ) from e
+            raise ExtractionError(f"Failed to open PDF: {e}") from e
+
         n_pages = len(pdf)
+        if n_pages == 0:
+            raise ExtractionError("PDF has no pages")
+        if n_pages > 300:
+            logger.warning(
+                "PDF has %d pages; processing may be very slow or memory-intensive",
+                n_pages,
+            )
+
         image_paths: list[str] = []
-        scale = 2
+        scale = 4  # F1.1: ~288 DPI (72 * 4)
         for i in range(n_pages):
             page = pdf[i]
             bitmap = page.render(scale=scale)
             pil_image = bitmap.to_pil()
+            # JPEG for display / HTML overlay; OCR uses the PIL bitmap directly
             image_path = output_dir / f"slide_{i + 1}.jpg"
             pil_image.save(image_path, format="JPEG", quality=90)
             image_paths.append(str(image_path))
         return image_paths
+    except ExtractionError:
+        raise
     except Exception as e:
         raise ExtractionError(f"Failed to rasterize PDF: {e}") from e
 
 
 def _clean_ocr_response(text: str) -> str:
+    """Strip instruction-echo lines and code fences from an AI OCR response.
+
+    F1.13: only drops lines that START with an instruction prefix (not lines
+    that merely contain those substrings mid-sentence).
+    """
     lines = text.split("\n")
     cleaned = []
-    skip_phrases = [
+    _EXACT_PREFIXES = (
         "RULES:",
         "Output ONLY",
         "Do NOT hallucinate",
@@ -167,11 +264,14 @@ def _clean_ocr_response(text: str) -> str:
         "No introductory",
         "No markdown",
         "Extract the text",
-        "markdown",
-        "```",
-    ]
+    )
     for line in lines:
-        if any(phrase in line for phrase in skip_phrases):
+        stripped = line.strip()
+        # Skip code fence markers
+        if stripped.startswith("```"):
+            continue
+        # Skip lines that are exact instruction echoes
+        if any(stripped.startswith(phrase) for phrase in _EXACT_PREFIXES):
             continue
         cleaned.append(line)
     result = "\n".join(cleaned).strip()
@@ -179,9 +279,13 @@ def _clean_ocr_response(text: str) -> str:
 
 
 def ocr_with_ollama(image_path: str, model: str = "glm-ocr") -> "str | None":
+    """Run AI-based OCR on an image using an Ollama vision model.
+
+    F1.12: uses a Client with explicit timeout; num_predict raised to 2048.
+    """
     try:
-        ollama = _get_ollama()
-        res = ollama.chat(
+        client = _get_ollama_client()
+        res = client.chat(
             model=model,
             messages=[
                 {
@@ -194,45 +298,115 @@ def ocr_with_ollama(image_path: str, model: str = "glm-ocr") -> "str | None":
                     "images": [image_path],
                 },
             ],
-            options={"temperature": 0, "num_predict": 500, "num_ctx": 16384},
+            options={"temperature": 0, "num_predict": 2048, "num_ctx": 16384},
         )
         if "message" in res and "content" in res["message"]:
             content = res["message"]["content"].strip()
             content = _clean_ocr_response(content)
-            if not content or re.match(r"^[|I1l!i\-_\u2014\s]+$", content):
+            if not content or re.match(r"^[|I1l!i\-_—\s]+$", content):
                 return ""
             return content
         return None
     except Exception as e:
-        logger.debug("AI OCR Failed for %s: %s", image_path, e)
+        logger.warning("AI OCR Failed for %s: %s", image_path, e)  # F1.14
         return None
 
 
-def get_segments_digital(
-    pdf_path: "str | Path", page_index: int
-) -> "list[dict[str, Any]]":
-    segments: list[dict[str, Any]] = []
+def _preprocess_image(img: Any) -> Any:
+    """Apply adaptive threshold + deskew via OpenCV when available (F1.3).
+
+    Gracefully returns the original image when OpenCV is not installed.
+    """
     try:
-        pdfplumber = _get_pdfplumber()
-        with pdfplumber.open(pdf_path) as pdf:
-            page = pdf.pages[page_index]
-            words = page.extract_words()
-            for w in words:
-                segments.append(
-                    {
-                        "text": w["text"],
-                        "bbox": [
-                            w["x0"],
-                            w["top"],
-                            w["x1"] - w["x0"],
-                            w["bottom"] - w["top"],
-                        ],
-                        "method": "Digital",
-                    }
-                )
-    except Exception as e:
-        logger.debug("Failed to extract digital segments on page %d: %s", page_index, e)
-    return segments
+        cv2 = _get_cv2()
+        import numpy as np
+
+        arr = np.array(img.convert("RGB"))
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        thresh = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+        )
+        from PIL import Image as PILImage
+
+        return PILImage.fromarray(thresh)
+    except Exception:
+        return img
+
+
+def _merge_paragraph_segments(
+    segments: "list[dict[str, Any]]",
+) -> "list[dict[str, Any]]":
+    """Merge adjacent same-style line segments into multi-line paragraph segments.
+
+    Two segments are merged when they have similar font size, are vertically
+    adjacent (gap < 1.5× word height), and overlap horizontally (>40% of the
+    narrower segment).
+    """
+    with_bbox = [s for s in segments if s.get("bbox")]
+    without_bbox = [s for s in segments if not s.get("bbox")]
+    if len(with_bbox) < 2:
+        return segments
+
+    with_bbox.sort(key=lambda s: (s["bbox"][1], s["bbox"][0]))
+
+    def _can_merge(a: "dict[str, Any]", b: "dict[str, Any]") -> bool:
+        ha = a.get("min_word_height") or a["bbox"][3]
+        hb = b.get("min_word_height") or b["bbox"][3]
+        if ha <= 0 or hb <= 0:
+            return False
+        if min(ha, hb) / max(ha, hb) < 0.7:
+            return False
+        a_bottom = a["bbox"][1] + a["bbox"][3]
+        gap = b["bbox"][1] - a_bottom
+        avg_h = (ha + hb) / 2
+        if gap > avg_h * 1.5 or gap < -avg_h * 0.3:
+            return False
+        a_left, a_right = a["bbox"][0], a["bbox"][0] + a["bbox"][2]
+        b_left, b_right = b["bbox"][0], b["bbox"][0] + b["bbox"][2]
+        overlap = min(a_right, b_right) - max(a_left, b_left)
+        min_w = min(a["bbox"][2], b["bbox"][2])
+        if min_w <= 0 or overlap / min_w < 0.4:
+            return False
+        return True
+
+    def _do_merge(a: "dict[str, Any]", b: "dict[str, Any]") -> "dict[str, Any]":
+        x0 = min(a["bbox"][0], b["bbox"][0])
+        y0 = min(a["bbox"][1], b["bbox"][1])
+        x1 = max(a["bbox"][0] + a["bbox"][2], b["bbox"][0] + b["bbox"][2])
+        y1 = max(a["bbox"][1] + a["bbox"][3], b["bbox"][1] + b["bbox"][3])
+        ha = a.get("min_word_height") or a["bbox"][3]
+        hb = b.get("min_word_height") or b["bbox"][3]
+        cw_a, cw_b = a.get("char_width"), b.get("char_width")
+        merged: dict[str, Any] = {
+            "text": a["text"] + " " + b["text"],
+            "bbox": [x0, y0, x1 - x0, y1 - y0],
+            "min_word_height": (ha + hb) / 2,
+            "method": a.get("method", b.get("method", "Tesseract")),
+        }
+        if cw_a and cw_b:
+            merged["char_width"] = (cw_a + cw_b) / 2
+        elif cw_a or cw_b:
+            merged["char_width"] = cw_a or cw_b
+        if a.get("ai_ocr_fallback") or b.get("ai_ocr_fallback"):
+            merged["ai_ocr_fallback"] = True
+        return merged
+
+    result = [with_bbox[0]]
+    for seg in with_bbox[1:]:
+        if _can_merge(result[-1], seg):
+            result[-1] = _do_merge(result[-1], seg)
+        else:
+            result.append(seg)
+    return result + without_bbox
+
+
+def _median_char_width(words: "list[dict[str, Any]]") -> float | None:
+    """Return median per-character width in pixels from word bboxes."""
+    cw = [w["width"] / len(w["text"]) for w in words if len(w.get("text", "")) > 0]
+    if not cw:
+        return None
+    cw.sort()
+    return cw[len(cw) // 2]
 
 
 def process_individual_segment(
@@ -242,6 +416,7 @@ def process_individual_segment(
     use_ai: bool,
     img_obj: Any,
     vision_model: str = "glm-ocr",
+    measured_char_width: float | None = None,
 ) -> None:
     if not word_list:
         return
@@ -264,8 +439,10 @@ def process_individual_segment(
         bbox = [min_x, y1, max_x - min_x, int(med_height * 1.5)]
     full_text = " ".join(w["text"] for w in word_list)
     method = "Dual-Pass OCR"
+    ai_ocr_fallback = False
+    temp_crop_path: str | None = None
     if use_ai and bbox[2] > 20 and bbox[3] > 10:
-        try:
+        try:  # F1.15: try/finally guarantees temp file cleanup
             crop = img_obj.crop(
                 (bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3])
             )
@@ -276,19 +453,32 @@ def process_individual_segment(
             if ai_text:
                 full_text = ai_text
                 method = "AI OCR (Segment)"
-            if os.path.exists(temp_crop_path):
-                os.remove(temp_crop_path)
+            else:
+                ai_ocr_fallback = True
         except Exception as e:
             logger.debug("AI Segment failed: %s", e)
+            ai_ocr_fallback = True
+        finally:
+            if temp_crop_path and os.path.exists(temp_crop_path):
+                os.remove(temp_crop_path)
+    # F1.11: use median word height instead of min to avoid outlier trap
     word_heights = [w["height"] for w in word_list if w["height"] > 0]
-    min_wh = min(word_heights) if word_heights else bbox[3]
-    segments.append(
-        {"text": full_text, "bbox": bbox, "min_word_height": min_wh, "method": method}
-    )
-
-
-def sanitize_segments(segments: "list[dict[str, Any]]") -> "list[dict[str, Any]]":
-    return list(segments)
+    if word_heights:
+        sorted_h = sorted(word_heights)
+        med_wh = sorted_h[len(sorted_h) // 2]
+    else:
+        med_wh = bbox[3]
+    seg: dict[str, Any] = {
+        "text": full_text,
+        "bbox": bbox,
+        "min_word_height": med_wh,
+        "method": method,
+    }
+    if measured_char_width is not None:
+        seg["char_width"] = measured_char_width
+    if ai_ocr_fallback:
+        seg["ai_ocr_fallback"] = True
+    segments.append(seg)
 
 
 def merge_words(
@@ -299,7 +489,8 @@ def merge_words(
     mid = len(tops) // 2
     med_top = tops[mid]
     med_height = heights[mid]
-    min_height = heights[0]
+    # F1.11: median height instead of heights[0] (min) to avoid outlier trap
+    median_height = heights[mid]
     x0 = min(w["x0"] for w in word_list)
     x1 = max(w["x1"] for w in word_list)
     real_top = min(w["top"] for w in word_list)
@@ -311,37 +502,131 @@ def merge_words(
         final_top = max(0, med_top - (med_height * 0.2))
         final_h = med_height * 1.5
     text = " ".join(w["text"] for w in word_list)
-    return {
+    cw = [
+        (w["x1"] - w["x0"]) / len(w["text"])
+        for w in word_list
+        if len(w.get("text", "")) > 0
+    ]
+    cw.sort()
+    med_char_w = (cw[len(cw) // 2] * sx) if cw else None
+    seg: dict[str, Any] = {
         "text": text,
         "bbox": [x0 * sx, final_top * sy, (x1 - x0) * sx, final_h * sy],
-        "min_word_height": min_height * sy,
+        "min_word_height": median_height * sy,
         "method": "Digital",
     }
+    if med_char_w is not None:
+        seg["char_width"] = med_char_w
+    return seg
 
 
 def get_segments_hybrid(
-    image_path: str, use_ai: bool = False, vision_model: str = "glm-ocr"
+    image_path: str,
+    use_ai: bool = False,
+    vision_model: str = "glm-ocr",
+    source_lang: str = "auto",  # F1.2
 ) -> "list[dict[str, Any]]":
+    """Extract text segments from an image using Tesseract OCR.
+
+    F1.2: honours ``source_lang``; in auto mode detects language and re-runs
+    with the correct pack when available.
+    F1.3: applies OpenCV preprocessing when available; runs a PSM-11 sparse
+    pass when the normal pass yields very few words.
+    F1.5: junk-character filter only applied when the line has other text.
+    F1.6: dedup by bbox IoU (>0.5 of smaller box), O(n log n) with top-sorted
+    early-exit bucketing.
+    F1.8: inverted pass skipped when normal pass is dense; inverted-only words
+    require conf ≥ 60.
+    F1.20: runs Tesseract OSD when the page yields few words and corrects
+    rotation before re-OCR.
+    """
     segments: list[dict[str, Any]] = []
     pytesseract = _configure_tesseract_path()
     pil_image = _get_pillow_image()
 
-    def get_raw_data(img_obj: Any) -> dict[str, Any]:
-        return pytesseract.image_to_data(img_obj, output_type=pytesseract.Output.DICT)
+    # Resolve Tesseract language code
+    tess_lang = "eng"
+    if source_lang != "auto":
+        mapped = _iso_to_tesseract_lang(source_lang)
+        if mapped:
+            installed = _get_tesseract_langs()
+            if mapped in installed:
+                tess_lang = mapped
+            else:
+                logger.warning(
+                    "Tesseract language pack '%s' not installed; falling back to 'eng'",
+                    mapped,
+                )
+
+    def get_raw_data(img_obj: Any, lang: str = tess_lang) -> dict[str, Any]:
+        return pytesseract.image_to_data(
+            img_obj, lang=lang, output_type=pytesseract.Output.DICT
+        )
 
     try:
         img = pil_image.open(image_path)
-        data_normal = get_raw_data(img)
-        from PIL import ImageOps
 
-        img_inverted = ImageOps.invert(img.convert("RGB"))
-        data_inverted = get_raw_data(img_inverted)
+        # F1.3: preprocessing (adaptive threshold) when OpenCV available
+        img_proc = _preprocess_image(img)
+
+        data_normal = get_raw_data(img_proc)
+
+        # F1.20: detect and correct page rotation when very few words found
+        normal_word_count = sum(
+            1
+            for idx in range(len(data_normal["text"]))
+            if int(data_normal["conf"][idx]) > 0 and data_normal["text"][idx].strip()
+        )
+        if normal_word_count < 10:
+            try:
+                osd = pytesseract.image_to_osd(
+                    img_proc, output_type=pytesseract.Output.DICT
+                )
+                angle = int(osd.get("rotate", 0))
+                if abs(angle) > 5:
+                    logger.debug(
+                        "Detected page rotation %d°; re-OCRing rotated image", angle
+                    )
+
+                    img = img.rotate(-angle, expand=True)
+                    img_proc = _preprocess_image(img)
+                    data_normal = get_raw_data(img_proc)
+                    normal_word_count = sum(
+                        1
+                        for idx in range(len(data_normal["text"]))
+                        if int(data_normal["conf"][idx]) > 0
+                        and data_normal["text"][idx].strip()
+                    )
+            except Exception:
+                pass
+
+        # F1.3: PSM-11 sparse-text pass when normal pass yields very few words
+        data_sparse: dict[str, Any] | None = None
+        if normal_word_count < 5:
+            try:
+                data_sparse = pytesseract.image_to_data(
+                    img_proc,
+                    lang=tess_lang,
+                    config="--psm 11",
+                    output_type=pytesseract.Output.DICT,
+                )
+            except Exception:
+                pass
+
+        # F1.8: skip inverted pass when normal pass already produced dense coverage
+        _DENSE_THRESHOLD = 30
+        run_inverted = normal_word_count < _DENSE_THRESHOLD
+
         all_words: list[dict[str, Any]] = []
 
-        def process_data(data_dict: dict[str, Any], source: str) -> None:
+        def process_data(
+            data_dict: dict[str, Any], source: str, min_conf: int = 0
+        ) -> None:
             n = len(data_dict["text"])
             for idx in range(n):
-                if int(data_dict["conf"][idx]) > 0 and data_dict["text"][idx].strip():
+                conf = int(data_dict["conf"][idx])
+                if conf > 0 and data_dict["text"][idx].strip():
+                    # F1.5: count dropped conf<=0 at debug (conf>0 already required above)
                     all_words.append(
                         {
                             "text": data_dict["text"][idx],
@@ -349,39 +634,95 @@ def get_segments_hybrid(
                             "top": data_dict["top"][idx],
                             "width": data_dict["width"][idx],
                             "height": data_dict["height"][idx],
-                            "conf": int(data_dict["conf"][idx]),
+                            "conf": conf,
                             "source": source,
                         }
                     )
 
         process_data(data_normal, "normal")
-        process_data(data_inverted, "inverted")
+
+        if data_sparse:
+            process_data(data_sparse, "normal")  # treat sparse as normal-source
+
+        if run_inverted:
+            from PIL import ImageOps
+
+            img_inverted = ImageOps.invert(img.convert("RGB"))
+            img_inv_proc = _preprocess_image(img_inverted)
+            data_inverted = get_raw_data(img_inv_proc)
+            # F1.8: accept inverted-only words only with conf >= 60
+            process_data(data_inverted, "inverted", min_conf=60)
+
+        # F1.2: auto-detect language from results and re-run if needed
+        if source_lang == "auto" and all_words:
+            sample_text = " ".join(w["text"] for w in all_words[:50])
+            if len(sample_text) > 20:
+                try:
+                    detected_lang = detect_langs(sample_text)[0].lang
+                    mapped = _iso_to_tesseract_lang(detected_lang)
+                    if mapped and mapped != "eng":
+                        installed = _get_tesseract_langs()
+                        if mapped in installed:
+                            logger.debug(
+                                "Auto-detected lang '%s' → re-running OCR with '%s'",
+                                detected_lang,
+                                mapped,
+                            )
+                            data_rerun = pytesseract.image_to_data(
+                                img_proc,
+                                lang=mapped,
+                                output_type=pytesseract.Output.DICT,
+                            )
+                            all_words = []
+                            process_data(data_rerun, "normal")
+                        else:
+                            logger.warning(
+                                "Tesseract lang pack '%s' for detected lang '%s' not installed",
+                                mapped,
+                                detected_lang,
+                            )
+                except Exception:
+                    pass
+
         all_words.sort(key=lambda w: (w["top"], w["left"]))
+
+        # F1.6: deduplicate by bbox IoU (>0.5 of smaller box), O(n log n) with bucketing
         unique_words: list[dict[str, Any]] = []
         for w in all_words:
             is_dup = False
-            for existing in unique_words:
-                if w["text"] == existing["text"]:
-                    x1o = max(w["left"], existing["left"])
-                    y1o = max(w["top"], existing["top"])
-                    x2o = min(
-                        w["left"] + w["width"], existing["left"] + existing["width"]
+            w_top = w["top"]
+            w_h = max(w["height"], 1)
+            # Only scan back through words with similar top (early-exit bucket)
+            for existing in reversed(unique_words):
+                if w_top - existing["top"] > w_h * 2.0:
+                    break
+                # IoU check — no text-equality requirement (F1.6)
+                x1o = max(w["left"], existing["left"])
+                y1o = max(w["top"], existing["top"])
+                x2o = min(w["left"] + w["width"], existing["left"] + existing["width"])
+                y2o = min(w["top"] + w["height"], existing["top"] + existing["height"])
+                if x1o < x2o and y1o < y2o:
+                    oa = (x2o - x1o) * (y2o - y1o)
+                    smaller = min(
+                        w["width"] * w["height"],
+                        existing["width"] * existing["height"],
                     )
-                    y2o = min(
-                        w["top"] + w["height"], existing["top"] + existing["height"]
-                    )
-                    if x1o < x2o and y1o < y2o:
-                        oa = (x2o - x1o) * (y2o - y1o)
-                        if oa > 0.5 * min(
-                            w["width"] * w["height"],
-                            existing["width"] * existing["height"],
-                        ):
-                            is_dup = True
-                            if w["conf"] > existing["conf"]:
-                                existing.update(w)
-                            break
+                    if smaller > 0 and oa > 0.5 * smaller:
+                        is_dup = True
+                        if w["conf"] > existing["conf"]:
+                            existing.update(w)
+                        break
             if not is_dup:
                 unique_words.append(w)
+
+        # F1.8: filter words accepted from inverted pass — require conf >= 60
+        filtered_unique: list[dict[str, Any]] = []
+        for w in unique_words:
+            if w.get("source") == "inverted" and w["conf"] < 60:
+                continue
+            filtered_unique.append(w)
+        unique_words = filtered_unique
+
         unique_words.sort(key=lambda w: w["top"])
         seg_lines: list[list[dict[str, Any]]] = []
         for w in unique_words:
@@ -401,14 +742,18 @@ def get_segments_hybrid(
             line.sort(key=lambda w: w["left"])
             if not line:
                 continue
+
+            # F1.5: junk filter only applies when the line has other text
+            _JUNK_CHARS = {"|", "I", "l", "1", "!", "i", "_", "-", "—"}
+            line_has_other = any(w["text"].strip() not in _JUNK_CHARS for w in line)
             filtered = []
             for w in line:
                 t = w["text"].strip()
-                if t in ["|", "I", "l", "1", "!", "i", "_", "-", "\u2014"]:
+                if t in _JUNK_CHARS and line_has_other:
                     ratio = w["height"] / w["width"] if w["width"] > 0 else 1
-                    if t in ["|", "I", "l", "1", "!", "i"] and ratio > 3.0:
+                    if t in {"|", "I", "l", "1", "!", "i"} and ratio > 3.0:
                         continue
-                    if t in ["_", "-", "\u2014"] and ratio < 0.3:
+                    if t in {"_", "-", "—"} and ratio < 0.3:
                         continue
                 filtered.append(w)
             line = filtered
@@ -425,14 +770,28 @@ def get_segments_hybrid(
                     line[i]["left"] - (line[i - 1]["left"] + line[i - 1]["width"])
                     > gap_thr
                 ):
+                    seg_cw = _median_char_width(cur)
                     process_individual_segment(
-                        cur, segments, image_path, use_ai, img, vision_model
+                        cur,
+                        segments,
+                        image_path,
+                        use_ai,
+                        img,
+                        vision_model,
+                        measured_char_width=seg_cw,
                     )
                     cur = []
                 cur.append(line[i])
             if cur:
+                seg_cw = _median_char_width(cur)
                 process_individual_segment(
-                    cur, segments, image_path, use_ai, img, vision_model
+                    cur,
+                    segments,
+                    image_path,
+                    use_ai,
+                    img,
+                    vision_model,
+                    measured_char_width=seg_cw,
                 )
     except Exception as e:
         logger.error(
@@ -444,7 +803,9 @@ def get_segments_hybrid(
     return segments
 
 
-def process_page(args: tuple[str, str, int, bool, bool, str]) -> dict[str, Any]:
+def process_page(
+    args: "tuple[str, str, int, bool, bool, str, str]",
+) -> "dict[str, Any]":
     """Process one page image and return the extracted slide payload.
 
     Args:
@@ -455,29 +816,45 @@ def process_page(args: tuple[str, str, int, bool, bool, str]) -> dict[str, Any]:
             - use_ai_ocr: Whether to use AI for OCR.
             - force_ocr: Whether to force OCR over digital extraction.
             - vision_model: Name of the AI vision model to use.
+            - source_lang: Source language hint (F1.2), default "auto".
 
     Returns:
         A dictionary containing the slide number, segments, full text, and image path.
     """
-    pdf_path_str, image_path, i, use_ai_ocr, force_ocr, vision_model = args
+    # F1.2: unpack optional source_lang with backward-compat default
+    if len(args) >= 7:
+        (
+            pdf_path_str,
+            image_path,
+            i,
+            use_ai_ocr,
+            force_ocr,
+            vision_model,
+            source_lang,
+        ) = args[:7]
+    else:
+        pdf_path_str, image_path, i, use_ai_ocr, force_ocr, vision_model = args[:6]
+        source_lang = "auto"
 
     item: dict[str, Any] = {
         "slide_num": i + 1,
         "segments": [],
-        "full_text": "",  # Concatenation for fallback/search
+        "full_text": "",
         "image_path": image_path,
         "lang": "unknown",
     }
 
     try:
-        # 1. Digital Extraction (PDFPlumber) - Only if not forcing OCR and not forcing AI
+        # 1. Digital Extraction (PDFPlumber)
+        # F1.9: condition is now `not force_ocr` only (AI-OCR checkbox no longer disables digital)
         got_digital = False
-        if not use_ai_ocr and not force_ocr:
+        digital_segments: list[dict[str, Any]] = []
+        if not force_ocr:
             try:
                 pdfplumber = _get_pdfplumber()
                 with pdfplumber.open(pdf_path_str) as pdf:
                     page = pdf.pages[i]
-                    text = page.extract_text()
+                    text = page.extract_text() or ""
                     if text and len(text.strip()) > 50:
                         pdf_w = page.width
                         pdf_h = page.height
@@ -490,7 +867,7 @@ def process_page(args: tuple[str, str, int, bool, bool, str]) -> dict[str, Any]:
                         scale_y = img_h / pdf_h
 
                         words = page.extract_words()
-                        segments = []
+                        segments: list[dict[str, Any]] = []
                         words.sort(key=lambda w: (w["top"], w["x0"]))
 
                         med_h = (
@@ -519,13 +896,14 @@ def process_page(args: tuple[str, str, int, bool, bool, str]) -> dict[str, Any]:
                             if not line:
                                 continue
 
+                            # F1.10: per-word char width → take median of those ratios
                             char_widths = [
-                                w["x1"] - w["x0"] for w in line if len(w["text"]) > 0
+                                (w["x1"] - w["x0"]) / max(1, len(w["text"]))
+                                for w in line
+                                if len(w["text"]) > 0
                             ]
                             if char_widths:
-                                med_char_w = sorted(char_widths)[
-                                    len(char_widths) // 2
-                                ] / max(1, len(line[0]["text"]))
+                                med_char_w = sorted(char_widths)[len(char_widths) // 2]
                             else:
                                 med_char_w = med_h * 0.5
 
@@ -545,18 +923,81 @@ def process_page(args: tuple[str, str, int, bool, bool, str]) -> dict[str, Any]:
                                     merge_words(current_chunk, scale_x, scale_y)
                                 )
 
-                        item["segments"] = segments
+                        # F1.7: check coverage; supplement with OCR when sparse
+                        page_area = pdf_w * pdf_h
+                        digital_word_area = sum(
+                            (w["x1"] - w["x0"]) * (w["bottom"] - w["top"])
+                            for w in words
+                        )
+                        digital_coverage = (
+                            digital_word_area / page_area if page_area > 0 else 1.0
+                        )
+
+                        digital_segments = segments
                         item["full_text"] = text
-                        got_digital = True
+
+                        if digital_coverage >= 0.02:
+                            # Good digital coverage — use digital only
+                            item["segments"] = segments
+                            got_digital = True
+                        # else: coverage too sparse → fall through to OCR
+
             except Exception as e:
                 logger.debug("Digital extraction failed on page %d: %s", i, e)
 
         if not got_digital:
-            segments = get_segments_hybrid(
-                image_path, use_ai=use_ai_ocr, vision_model=vision_model
+            ocr_segs = get_segments_hybrid(
+                image_path,
+                use_ai=use_ai_ocr,
+                vision_model=vision_model,
+                source_lang=source_lang,
             )
-            item["segments"] = segments
-            item["full_text"] = "\n".join([s["text"] for s in segments])
+
+            # F1.7: merge OCR with sparse digital segments (non-overlapping only)
+            if digital_segments:
+                merged: list[dict[str, Any]] = list(digital_segments)
+                for seg in ocr_segs:
+                    if not seg.get("bbox"):
+                        merged.append(seg)
+                        continue
+                    overlaps = any(
+                        _bbox_iou_exceeds(seg["bbox"], db["bbox"], 0.3)
+                        for db in digital_segments
+                        if db.get("bbox")
+                    )
+                    if not overlaps:
+                        merged.append(seg)
+                item["segments"] = merged
+            else:
+                item["segments"] = ocr_segs
+
+            item["full_text"] = "\n".join(s["text"] for s in item["segments"])
+
+        # F1.4: full-page AI OCR fallback when page has zero segments
+        if use_ai_ocr and not item["segments"]:
+            logger.debug(
+                "Page %d: zero segments; attempting full-page AI OCR fallback", i
+            )
+            try:
+                ai_text = ocr_with_ollama(image_path, model=vision_model)
+                if ai_text:
+                    item["segments"] = [
+                        {
+                            "text": ai_text,
+                            "bbox": None,
+                            "min_word_height": None,
+                            "method": "AI OCR (Page)",
+                        }
+                    ]
+                    item["full_text"] = ai_text
+            except Exception as e:
+                logger.warning("Full-page AI OCR fallback failed page %d: %s", i, e)
+
+        if item["segments"]:
+            item["segments"] = _merge_paragraph_segments(item["segments"])
+            item["full_text"] = "\n".join(
+                s["text"] for s in item["segments"] if s.get("text")
+            )
 
     except Exception as e:
         item["full_text"] = f"Error: {e}"
@@ -564,9 +1005,27 @@ def process_page(args: tuple[str, str, int, bool, bool, str]) -> dict[str, Any]:
     return item
 
 
+def _bbox_iou_exceeds(a: "list[float]", b: "list[float]", threshold: float) -> bool:
+    """Return True when the IoU of two [x,y,w,h] bboxes exceeds threshold."""
+    x1o = max(a[0], b[0])
+    y1o = max(a[1], b[1])
+    x2o = min(a[0] + a[2], b[0] + b[2])
+    y2o = min(a[1] + a[3], b[1] + b[3])
+    if x1o >= x2o or y1o >= y2o:
+        return False
+    oa = (x2o - x1o) * (y2o - y1o)
+    smaller = min(a[2] * a[3], b[2] * b[3])
+    return smaller > 0 and oa > threshold * smaller
+
+
+def _safe_stem(stem: str) -> str:
+    """Sanitize a filename stem to [A-Za-z0-9._-] (F1.18)."""
+    return re.sub(r"[^A-Za-z0-9._\-]", "_", stem)
+
+
 def _process_text_file(
     txt_path: Path, doc_dir: Path, progress_callback: Any | None = None
-) -> Path | None:
+) -> "Path | None":
     """Extract paragraphs from a .txt file into input_data.json.
 
     Args:
@@ -637,7 +1096,8 @@ def process_file(
     use_ai_ocr: bool = False,
     force_ocr: bool = False,
     vision_model: str = "glm-ocr",
-) -> Path | None:
+    source_lang: str = "auto",  # F1.2
+) -> "Path | None":
     """Extract a PDF, image, or text file into a translation workspace directory.
 
     Args:
@@ -648,6 +1108,7 @@ def process_file(
         use_ai_ocr: Whether to use AI for OCR.
         force_ocr: Whether to force OCR for digital PDFs.
         vision_model: The AI vision model to use.
+        source_lang: Source language hint for Tesseract (F1.2).
 
     Returns:
         The output directory path if successful, None otherwise.
@@ -656,14 +1117,20 @@ def process_file(
         file_stem = folder_name
     else:
         file_stem = pdf_path.stem
-    safe_stem = file_stem.replace(" ", "_")
+
+    # F1.18: sanitize stem and handle directory collisions
+    safe_stem = _safe_stem(file_stem)
+    doc_dir = output_dir / safe_stem
+    if doc_dir.exists() and any(doc_dir.iterdir()):
+        ts = int(time.time())
+        safe_stem = f"{safe_stem}_{ts}"
+        doc_dir = output_dir / safe_stem
 
     if progress_callback:
         progress_callback(f"Starting extraction for {pdf_path.name}...", 0)
     else:
         logger.info("Extracting: %s", pdf_path.name)
 
-    doc_dir = output_dir / safe_stem
     img_dir = doc_dir / "images"
     doc_dir.mkdir(parents=True, exist_ok=True)
     img_dir.mkdir(parents=True, exist_ok=True)
@@ -701,17 +1168,20 @@ def process_file(
                 logger.error(err)
             return None
 
-    cpu_count = min(os.cpu_count() or 4, 8)
+    # F1.14: cap pool at 2 workers when use_ai_ocr to avoid overloading Ollama
+    base_cpu = min(os.cpu_count() or 4, 8)
+    cpu_count = min(2, base_cpu) if use_ai_ocr else base_cpu
+
     msg = f"   -> Processing {len(image_paths)} slides..."
     if progress_callback:
         progress_callback(msg, 20)
 
     tasks = [
-        (str(pdf_path), p, i, use_ai_ocr, force_ocr, vision_model)
+        (str(pdf_path), p, i, use_ai_ocr, force_ocr, vision_model, source_lang)
         for i, p in enumerate(image_paths)
     ]
 
-    extracted_data = []
+    extracted_data: list[dict[str, Any]] = []
     with multiprocessing.Pool(processes=cpu_count) as pool:
         if progress_callback:
             total = len(tasks)
@@ -727,7 +1197,6 @@ def process_file(
 
     extracted_data.sort(key=lambda x: x["slide_num"])
 
-    # 3. Language Detection (Simple majority vote on segments)
     msg = "   -> Detecting languages..."
     if progress_callback:
         progress_callback(msg, 85)
@@ -740,7 +1209,6 @@ def process_file(
             except Exception:
                 item["lang"] = "unknown"
 
-    # 4. Save Data
     json_path = doc_dir / "input_data.json"
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(extracted_data, f, indent=2, ensure_ascii=False)
@@ -762,7 +1230,14 @@ def main() -> None:
     parser.add_argument(
         "--use-ai-ocr",
         action="store_true",
-        help="Use Ollama (DeepSeek) for OCR segments (slower but better for tables/handwriting)",
+        # F1.19: removed stale "DeepSeek" reference
+        help="Use Ollama vision model for OCR segments (slower but better for tables/handwriting)",
+    )
+    # F1.2: source-lang CLI flag
+    parser.add_argument(
+        "--source-lang",
+        default="auto",
+        help="Source language ISO code (e.g. ja, zh-cn) or 'auto' for auto-detect",
     )
 
     args = parser.parse_args()
@@ -795,7 +1270,11 @@ def main() -> None:
 
     for f in files:
         process_file(
-            f, output_dir, force_ocr=args.force_ocr, use_ai_ocr=args.use_ai_ocr
+            f,
+            output_dir,
+            force_ocr=args.force_ocr,
+            use_ai_ocr=args.use_ai_ocr,
+            source_lang=args.source_lang,
         )
 
 

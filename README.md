@@ -2,10 +2,14 @@
 
 [![CI](https://github.com/anzalks/loctran/actions/workflows/ci.yml/badge.svg)](https://github.com/anzalks/loctran/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/loctran)](https://pypi.org/project/loctran/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python](https://img.shields.io/pypi/pyversions/loctran)](https://pypi.org/project/loctran/)
 
 **Translate PDFs locally. No cloud. No API key. Just Ollama.**
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/anzalks/loctran/main/demo/loctran_demo.gif" alt="Loctran demo — upload, translate, view" width="720">
+</p>
 
 ## Features
 
@@ -16,6 +20,9 @@
 | Batched LLM translation via Ollama | Works with any local chat model |
 | HTML overlay output | Translations positioned over the original layout |
 | Web UI with real-time progress | Upload and translate from any browser |
+| Source language selector | Improve OCR accuracy for non-English documents |
+| Cancel running jobs | Stop long translations without restarting the server |
+| Image-to-PDF conversion | Convert JPG/PNG scans to searchable PDF |
 | PDF compression | Reduce file size without proprietary tools |
 | **100 % local — files never leave your machine** | Full privacy, no API keys, works offline |
 
@@ -39,7 +46,7 @@
 
 ## 30-second install
 
-The default install includes the Web UI. A plain `pip install loctran` is enough to start the app.
+The default install includes the Web UI and all dependencies (OCR, OpenCV, Ollama client). A plain `pip install loctran` is enough to start the app.
 
 ```bash
 pip install loctran
@@ -105,7 +112,7 @@ loctran serve
 # → http://localhost:8000
 ```
 
-Upload a PDF, choose a target language and model, then watch the real-time progress bar. The translated HTML opens automatically when done.
+Upload a PDF (up to 50 MB), choose source and target languages, pick an OCR and translation model, then watch the real-time progress bar. Cancel any running job with the cancel button. The translated HTML opens automatically when done.
 
 ---
 
@@ -134,18 +141,6 @@ loctran translate book.pdf --lang German --batch-size 3
 loctran doctor
 ```
 
-## Updating README screenshots
-
-```bash
-pip install -e ".[dev]"
-python -m playwright install chromium
-make screenshots
-```
-
-This writes screenshots to `docs/screenshots/` using `scripts/capture_screenshots.py`.
-
----
-
 ## FAQ
 
 **Does this send my documents anywhere?**
@@ -161,9 +156,18 @@ Loctran automatically detects whether a PDF has a digital text layer. If it does
 
 ## Docker
 
+Loctran needs a running Ollama instance. Inside a container, `localhost` doesn't reach the host, so pass `OLLAMA_HOST`:
+
 ```bash
-docker run -p 8000:8000 -v ~/Documents:/docs ghcr.io/anzalks/loctran
+docker build -t loctran .
+
+docker run -p 8000:8000 \
+  -e OLLAMA_HOST=http://host.docker.internal:11434 \
+  -v ~/Documents:/docs \
+  loctran
 ```
+
+The container runs with `--no-desktop --no-browser` automatically. Mount a volume at `/docs` to access your files from the Web UI.
 
 ---
 
@@ -175,6 +179,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, running tests, and
 
 ## License
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-Apache 2.0 — © 2026 Anzal K Shahul
+This project is dual-licensed:
+
+- **Open source** — [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). You may use, modify, and distribute Loctran under the AGPL, which requires that any modified version or networked service built on Loctran also be released under the AGPL with full source code.
+- **Commercial** — A proprietary license is available for organisations that cannot comply with the AGPL's copyleft obligations. Contact **anzal.ks@gmail.com** for terms.
+
+© 2026 Anzal K Shahul. All rights reserved.
+
+The recommended AI models (TranslateGemma, GLM-OCR) carry their own licenses. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for details.

@@ -38,26 +38,20 @@ def estimate_system_ram_gb() -> float:
     return psutil.virtual_memory().total / float(1024**3)
 
 
+def normalize_model_tag(name: str) -> str:
+    """Append ':latest' to a model name that has no tag specified (F7.6)."""
+    return name if ":" in name else f"{name}:latest"
+
+
 def choose_startup_model(
     ram_gb: float,
-    translation_model: str = DEFAULT_MODEL,
-    ocr_model: str = DEFAULT_OCR_MODEL,
-    default_model: str | None = None,
+    default_model: str = DEFAULT_MODEL,
     low_resource_model: str | None = None,
 ) -> str:
-    """Choose a startup translation model.
-
-    In legacy mode (when low_resource_model is provided), preserve the old
-    RAM-based fallback behavior for backward compatibility.
-    """
-    selected_default = default_model or translation_model
-    legacy_low_resource = low_resource_model
-
-    # Legacy mode: callers that pre-date the dual-model split pass
-    # low_resource_model explicitly. New callers always leave it None.
-    if legacy_low_resource and ram_gb < 8.0:
-        return legacy_low_resource
-    return selected_default
+    """Return the appropriate startup model given available RAM (F7.8)."""
+    if low_resource_model and ram_gb < 8.0:
+        return low_resource_model
+    return default_model
 
 
 def extract_model_size_b(model_name: str) -> float | None:
@@ -75,20 +69,18 @@ def extract_model_size_b(model_name: str) -> float | None:
     return float(match.group(1))
 
 
+_RAM_PER_BILLION_PARAMS = 0.7
+
+
 def should_warn_large_model(model_name: str, ram_gb: float) -> bool:
-    """Determine whether a model is likely too large for the detected RAM.
+    """Return True when the model likely requires more RAM than available (F7.7).
 
-    Args:
-        model_name: Requested model tag.
-        ram_gb: Detected RAM in GiB.
-
-    Returns:
-        True when the model is likely too heavy for local hardware.
+    Uses ~0.7 GiB per billion parameters as an approximation.
     """
     size_b = extract_model_size_b(model_name)
     if size_b is None:
         return False
-    return ram_gb <= 8.0 and size_b >= 32.0
+    return size_b * _RAM_PER_BILLION_PARAMS > ram_gb
 
 
 def list_local_models() -> list[str]:
@@ -143,9 +135,7 @@ def ensure_startup_model(
     ram_gb = estimate_system_ram_gb()
     selected_model = choose_startup_model(
         ram_gb,
-        translation_model=selected_translation,
-        ocr_model=ocr_model,
-        default_model=default_model,
+        default_model=selected_translation,
         low_resource_model=low_resource_model,
     )
 
@@ -168,22 +158,29 @@ def ensure_startup_model(
             "pulled": pulled,
             "warning": warning,
             "required_models": [selected_model],
-            "missing_models": [] if (local_models or pulled) else [selected_model],
+            "missing_models": ([] if (local_models or pulled) else [selected_model]),
             "pulled_models": [selected_model] if pulled else [],
             "verified": bool(local_models or pulled),
         }
 
-    required_models = [ocr_model, selected_translation]
+    required_models = [selected_translation]
+    if ocr_model:
+        required_models.append(ocr_model)
     local_models = list_local_models()
+    local_normalized = {normalize_model_tag(m) for m in local_models}
 
-    missing_models = [m for m in required_models if m not in local_models]
+    missing_models = [
+        m for m in required_models if normalize_model_tag(m) not in local_normalized
+    ]
     pulled_models: list[str] = []
     for model_name in missing_models:
         if pull_model(model_name):
             pulled_models.append(model_name)
 
-    refreshed_models = set(list_local_models())
-    still_missing = [m for m in required_models if m not in refreshed_models]
+    refreshed_normalized = {normalize_model_tag(m) for m in list_local_models()}
+    still_missing = [
+        m for m in required_models if normalize_model_tag(m) not in refreshed_normalized
+    ]
     pulled = bool(pulled_models)
     verified = not still_missing
 

@@ -14,3 +14,4 @@
 - [ ] Type-check passes: `mypy loctran/ --ignore-missing-imports`
 - [ ] CHANGELOG.md updated under `## [Unreleased]`
 - [ ] Docs / README updated if user-facing behaviour changed
+- [ ] I agree to the [Contributor License Agreement](CLA.md)

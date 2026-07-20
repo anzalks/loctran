@@ -106,55 +106,35 @@ branchées.
 
 
 def generate_french_pdf(output_path: Path) -> None:
-    """Generate a French PDF using available tools (fpdf or reportlab)."""
-    # Try fpdf first (already in dependencies)
+    """Generate a French PDF using Pillow (renders text to image, saves as PDF)."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    W, H = 2480, 3508  # A4 at ~300 DPI
+    img = Image.new("RGB", (W, H), "white")
+    draw = ImageDraw.Draw(img)
+
     try:
-        from fpdf import FPDF
+        title_font = ImageFont.truetype("Helvetica-Bold", 56)
+        body_font = ImageFont.truetype("Helvetica", 38)
+    except OSError:
+        title_font = ImageFont.load_default(56)
+        body_font = ImageFont.load_default(38)
 
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Helvetica", "B", 16)
-        pdf.cell(0, 10, "Paris, la Capitale", ln=True)
-        pdf.set_font("Helvetica", "", 11)
-        pdf.ln(5)
+    y = 200
+    draw.text((200, y), "Paris, la Capitale", fill="black", font=title_font)
+    y += 100
 
-        for line in FRENCH_TEXT.split("\n"):
-            if line.strip():
-                pdf.multi_cell(0, 5, line.strip())
-            else:
-                pdf.ln(2)
+    for line in FRENCH_TEXT.split("\n"):
+        stripped = line.strip()
+        if stripped:
+            draw.text((200, y), stripped, fill="black", font=body_font)
+            y += 52
+        else:
+            y += 30
+        if y > H - 200:
+            break
 
-        pdf.output(str(output_path))
-        return
-    except ImportError:
-        pass
-
-    # Fall back to reportlab if fpdf is not available
-    try:
-        from reportlab.pdfgen import canvas
-        from reportlab.lib.pagesizes import letter
-
-        c = canvas.Canvas(str(output_path), pagesize=letter)
-        c.setFont("Helvetica-Bold", 18)
-        c.drawString(50, 750, "Paris, la Capitale")
-
-        c.setFont("Helvetica", 11)
-        y = 720
-        line_height = 14
-
-        for line in FRENCH_TEXT.split("\n"):
-            if line.strip():
-                c.drawString(50, y, line.strip())
-                y -= line_height * 1.2
-            else:
-                y -= line_height
-
-        c.save()
-        return
-    except ImportError:
-        pass
-
-    _write_minimal_pdf(output_path, FRENCH_TEXT.split("\n"))
+    img.save(str(output_path), "PDF", resolution=300.0)
 
 
 def wait_for_health(base_url: str, timeout_seconds: float = 30.0) -> None:

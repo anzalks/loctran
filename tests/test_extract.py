@@ -286,27 +286,6 @@ class TestRasterizePdf:
             assert p.endswith(".jpg")
 
 
-class TestDigitalExtractionDetectsText:
-    def test_digital_extraction_returns_non_empty_segments(self):
-        """get_segments_digital must return segments for a page that has words."""
-        fake_word = {"text": "Hello", "x0": 10, "top": 20, "x1": 50, "bottom": 34}
-        fake_page = MagicMock()
-        fake_page.extract_words.return_value = [fake_word]
-        fake_pdf = MagicMock()
-        fake_pdf.__enter__ = MagicMock(return_value=fake_pdf)
-        fake_pdf.__exit__ = MagicMock(return_value=False)
-        fake_pdf.pages = [fake_page]
-
-        with patch("loctran.extract._get_pdfplumber") as mock_pp:
-            mock_pp.return_value = MagicMock(open=MagicMock(return_value=fake_pdf))
-            import loctran.extract as ext
-
-            segs = ext.get_segments_digital("dummy.pdf", 0)
-
-        assert len(segs) >= 1
-        assert segs[0]["text"] == "Hello"
-
-
 class TestForceOcrSkipsDigitalPath:
     def test_force_ocr_does_not_call_pdfplumber(self, tmp_path):
         """When force_ocr=True, process_file must not call pdfplumber.open."""
@@ -374,12 +353,17 @@ class TestColumnGapSplitsSegments:
 
         fake_img = RealImage.new("RGB", (800, 100), color=(255, 255, 255))
 
-        def _fake_process(words, segs, image_path, use_ai, img, vision_model):
+        def _fake_process(words, segs, image_path, use_ai, img, vision_model, **kw):
             text = " ".join(w["text"] for w in words)
             segs.append({"text": text, "bbox": [0, 0, 30, 12], "method": "OCR"})
 
         fake_pytess = MagicMock()
-        fake_pytess.image_to_data.side_effect = [fake_data_normal, empty_data]
+        # 3 responses: normal pass, PSM-11 sparse pass, inverted pass
+        fake_pytess.image_to_data.side_effect = [
+            fake_data_normal,
+            empty_data,
+            empty_data,
+        ]
         fake_pytess.Output.DICT = "dict"
 
         with (
@@ -394,7 +378,6 @@ class TestColumnGapSplitsSegments:
         ):
             segs = ext.get_segments_hybrid("dummy.jpg", use_ai=False)
 
-        assert len(segs) >= 2
         assert len(segs) >= 2
 
 
@@ -422,21 +405,6 @@ class TestCleanOcrResponse:
         import loctran.extract as ext
 
         assert ext._clean_ocr_response("Hello world") == "Hello world"
-
-
-class TestSanitizeSegments:
-    def test_passthrough(self):
-        import loctran.extract as ext
-
-        segs = [{"bbox": [0, 0, 100, 20], "text": "Hello"}]
-        result = ext.sanitize_segments(segs)
-        assert len(result) == 1
-        assert result[0]["text"] == "Hello"
-
-    def test_empty_input(self):
-        import loctran.extract as ext
-
-        assert ext.sanitize_segments([]) == []
 
 
 class TestMergeWords:
@@ -490,6 +458,106 @@ class TestMergeWords:
         assert result["bbox"][3] < 200
 
 
+class TestMergeParagraphSegments:
+    def _seg(self, text, x, y, w, h, wh=None, cw=None):
+        s = {
+            "text": text,
+            "bbox": [x, y, w, h],
+            "min_word_height": wh or h,
+            "method": "Tesseract",
+        }
+        if cw is not None:
+            s["char_width"] = cw
+        return s
+
+    def test_adjacent_lines_merge(self):
+        import loctran.extract as ext
+
+        segs = [
+            self._seg("Hello world", 10, 10, 200, 20, wh=18),
+            self._seg("this is line two", 10, 32, 200, 20, wh=18),
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 1
+        assert "Hello world" in result[0]["text"]
+        assert "this is line two" in result[0]["text"]
+        assert result[0]["bbox"][3] > 30
+
+    def test_different_font_sizes_stay_separate(self):
+        import loctran.extract as ext
+
+        segs = [
+            self._seg("Big Title", 10, 10, 200, 40, wh=38),
+            self._seg("small body text", 10, 55, 200, 15, wh=13),
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 2
+
+    def test_distant_lines_stay_separate(self):
+        import loctran.extract as ext
+
+        segs = [
+            self._seg("Line one", 10, 10, 200, 20, wh=18),
+            self._seg("Line far below", 10, 200, 200, 20, wh=18),
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 2
+
+    def test_different_columns_stay_separate(self):
+        import loctran.extract as ext
+
+        segs = [
+            self._seg("Left col", 10, 10, 100, 20, wh=18),
+            self._seg("Right col", 400, 12, 100, 20, wh=18),
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 2
+
+    def test_three_lines_merge(self):
+        import loctran.extract as ext
+
+        segs = [
+            self._seg("Line 1", 10, 10, 200, 18, wh=16),
+            self._seg("Line 2", 10, 30, 200, 18, wh=16),
+            self._seg("Line 3", 10, 50, 200, 18, wh=16),
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 1
+        assert "Line 1 Line 2 Line 3" == result[0]["text"]
+
+    def test_char_width_averaged(self):
+        import loctran.extract as ext
+
+        segs = [
+            self._seg("A", 10, 10, 200, 18, wh=16, cw=8.0),
+            self._seg("B", 10, 30, 200, 18, wh=16, cw=10.0),
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert result[0]["char_width"] == pytest.approx(9.0)
+
+    def test_no_bbox_segments_preserved(self):
+        import loctran.extract as ext
+
+        segs = [
+            {
+                "text": "no bbox",
+                "bbox": None,
+                "min_word_height": None,
+                "method": "AI OCR (Page)",
+            },
+        ]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 1
+        assert result[0]["text"] == "no bbox"
+
+    def test_single_segment_unchanged(self):
+        import loctran.extract as ext
+
+        segs = [self._seg("Solo", 10, 10, 200, 20, wh=18)]
+        result = ext._merge_paragraph_segments(segs)
+        assert len(result) == 1
+
+
 class TestProcessTextFile:
     def test_creates_input_data_json(self, tmp_path):
         import loctran.extract as ext
@@ -535,33 +603,6 @@ class TestProcessTextFile:
         assert len(calls) >= 2
 
 
-class TestGetSegmentsDigital:
-    def test_returns_segments_from_words(self):
-        import loctran.extract as ext
-
-        fake_word = {"text": "Hello", "x0": 10, "x1": 50, "top": 5, "bottom": 20}
-        fake_page = MagicMock()
-        fake_page.extract_text.return_value = "Hello"
-        fake_page.extract_words.return_value = [fake_word]
-        fake_pdf_ctx = MagicMock()
-        fake_pdf_ctx.__enter__ = MagicMock(return_value=MagicMock(pages=[fake_page]))
-        fake_pdf_ctx.__exit__ = MagicMock(return_value=False)
-        fake_pdfplumber = MagicMock()
-        fake_pdfplumber.open.return_value = fake_pdf_ctx
-        with patch("loctran.extract._get_pdfplumber", return_value=fake_pdfplumber):
-            segs = ext.get_segments_digital("dummy.pdf", 0)
-        assert isinstance(segs, list)
-
-    def test_returns_empty_on_exception(self):
-        import loctran.extract as ext
-
-        with patch(
-            "loctran.extract._get_pdfplumber", side_effect=RuntimeError("no pdfplumber")
-        ):
-            segs = ext.get_segments_digital("dummy.pdf", 0)
-        assert segs == []
-
-
 class TestHybridAndProcessPageCoverage:
     def test_get_segments_hybrid_returns_segments(self, tmp_path):
         from PIL import Image
@@ -590,11 +631,13 @@ class TestHybridAndProcessPageCoverage:
 
         fake_tesseract = MagicMock()
         fake_tesseract.Output.DICT = "dict"
-        fake_tesseract.image_to_data.side_effect = [fake_data, empty_data]
+        # 3 responses: normal pass, PSM-11 sparse pass, inverted pass
+        fake_tesseract.image_to_data.side_effect = [fake_data, empty_data, empty_data]
 
         with (
             patch(
-                "loctran.extract._configure_tesseract_path", return_value=fake_tesseract
+                "loctran.extract._configure_tesseract_path",
+                return_value=fake_tesseract,
             ),
             patch("loctran.extract._get_pillow_image", return_value=Image),
         ):
@@ -616,10 +659,12 @@ class TestHybridAndProcessPageCoverage:
             "loctran.extract.get_segments_hybrid", return_value=fake_segments
         ) as mocked:
             result = ext.process_page(
-                ("dummy.pdf", str(image_path), 0, True, True, None)
+                ("dummy.pdf", str(image_path), 0, True, True, None, "auto")
             )
 
-        mocked.assert_called_once_with(str(image_path), use_ai=True, vision_model=None)
+        mocked.assert_called_once_with(
+            str(image_path), use_ai=True, vision_model=None, source_lang="auto"
+        )
         assert result is not None
         assert result["segments"] == fake_segments
         assert "translated" in result["full_text"]
@@ -740,15 +785,6 @@ class TestExtractMain:
 
         process_file_mock.assert_not_called()
 
-    def test_returns_empty_on_exception(self):
-        import loctran.extract as ext
-
-        with patch(
-            "loctran.extract._get_pdfplumber", side_effect=RuntimeError("no pdfplumber")
-        ):
-            segs = ext.get_segments_digital("dummy.pdf", 0)
-        assert segs == []
-
 
 # ---------------------------------------------------------------------------
 # Tests: lazy-loader error cases
@@ -800,9 +836,9 @@ class TestOcrWithOllama:
     def test_returns_text_on_success(self):
         import loctran.extract as ext
 
-        mock_ollama = MagicMock()
-        mock_ollama.chat.return_value = {"message": {"content": "Hello World"}}
-        with patch("loctran.extract._get_ollama", return_value=mock_ollama):
+        mock_client = MagicMock()
+        mock_client.chat.return_value = {"message": {"content": "Hello World"}}
+        with patch("loctran.extract._get_ollama_client", return_value=mock_client):
             result = ext.ocr_with_ollama("dummy.jpg")
         assert result == "Hello World"
 
@@ -810,7 +846,8 @@ class TestOcrWithOllama:
         import loctran.extract as ext
 
         with patch(
-            "loctran.extract._get_ollama", side_effect=RuntimeError("no ollama")
+            "loctran.extract._get_ollama_client",
+            side_effect=RuntimeError("no ollama"),
         ):
             result = ext.ocr_with_ollama("dummy.jpg")
         assert result is None
@@ -819,9 +856,9 @@ class TestOcrWithOllama:
         """Text that matches the noise regex should return empty string."""
         import loctran.extract as ext
 
-        mock_ollama = MagicMock()
-        mock_ollama.chat.return_value = {"message": {"content": "|||"}}
-        with patch("loctran.extract._get_ollama", return_value=mock_ollama):
+        mock_client = MagicMock()
+        mock_client.chat.return_value = {"message": {"content": "|||"}}
+        with patch("loctran.extract._get_ollama_client", return_value=mock_client):
             result = ext.ocr_with_ollama("dummy.jpg")
         assert result == ""
 

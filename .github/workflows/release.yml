@@ -21,6 +21,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Abort if tag is not on main
+        run: |
+          if ! git branch -r --contains HEAD | grep -q 'origin/main'; then
+            echo "::error::Release tags must be on the main branch"
+            exit 1
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5

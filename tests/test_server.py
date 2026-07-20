@@ -25,7 +25,6 @@ def client():
         patch("loctran.server.store.init_db"),
         patch("loctran.server.store.list_active_jobs", return_value=[]),
         patch("loctran.server.server.check_ai_engine"),
-        patch("loctran.server.server.threading.Thread"),
     ):
         from fastapi.testclient import TestClient
 
@@ -104,7 +103,8 @@ class TestProcess:
         )
         assert resp.status_code == 400
 
-    def test_rejects_non_translate_model(self, client, tmp_path):
+    def test_warns_but_accepts_non_translate_model(self, client, tmp_path):
+        """F4.11: unknown model keyword now warns instead of returning 400."""
         saved = tmp_path / "doc.pdf"
         saved.write_bytes(b"%PDF-1.4")
         resp = client.post(
@@ -117,23 +117,23 @@ class TestProcess:
                 "vision_model": "llava:latest",
             },
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 200
+        assert "job_id" in resp.json()
 
     def test_queues_valid_job(self, client, tmp_path):
         saved = tmp_path / "doc.pdf"
         saved.write_bytes(b"%PDF-1.4")
-        with patch("loctran.server.server.threading.Thread"):
-            resp = client.post(
-                "/process",
-                params={
-                    "filename": "doc.pdf",
-                    "saved_path": str(saved),
-                    "lang": "French",
-                    "model": "qwen2.5:7b",
-                    "vision_model": "llava:latest",
-                    "output_path": str(tmp_path),
-                },
-            )
+        resp = client.post(
+            "/process",
+            params={
+                "filename": "doc.pdf",
+                "saved_path": str(saved),
+                "lang": "French",
+                "model": "qwen2.5:7b",
+                "vision_model": "llava:latest",
+                "output_path": str(tmp_path),
+            },
+        )
         assert resp.status_code == 200
         assert "job_id" in resp.json()
 
@@ -154,17 +154,16 @@ class TestConvert:
     def test_queues_valid_conversion(self, client, tmp_path):
         saved = tmp_path / "doc.pdf"
         saved.write_bytes(b"%PDF-1.4")
-        with patch("loctran.server.server.threading.Thread"):
-            resp = client.post(
-                "/convert",
-                params={
-                    "filename": "doc.pdf",
-                    "saved_path": str(saved),
-                    "target_size": "1MB",
-                    "output_format": "pdf",
-                    "output_path": str(tmp_path),
-                },
-            )
+        resp = client.post(
+            "/convert",
+            params={
+                "filename": "doc.pdf",
+                "saved_path": str(saved),
+                "target_size": "1MB",
+                "output_format": "pdf",
+                "output_path": str(tmp_path),
+            },
+        )
         assert resp.status_code == 200
         assert "job_id" in resp.json()
 
@@ -238,7 +237,13 @@ class TestRunConversion:
                 "reduction": "20%",
             },
         ):
-            srv.run_conversion(job_id, f, "1MB", tmp_path)
+            srv.run_conversion(
+                job_id,
+                f,
+                "in.pdf",
+                "1MB",
+                tmp_path,
+            )
         assert srv.jobs[job_id]["status"] == "completed"
 
     def test_conversion_failure_sets_status_failed(self, tmp_path):
@@ -260,7 +265,13 @@ class TestRunConversion:
             "loctran.server.server.compress_file",
             side_effect=RuntimeError("bad compress"),
         ):
-            srv.run_conversion(job_id, f, "1MB", tmp_path)
+            srv.run_conversion(
+                job_id,
+                f,
+                "in.pdf",
+                "1MB",
+                tmp_path,
+            )
         assert srv.jobs[job_id]["status"] == "failed"
 
 
@@ -552,3 +563,109 @@ class TestDesktopHeartbeatShutdown:
             srv._pending_shutdown_task = original_pending
             srv.active_connections.clear()
             srv.active_connections.update(original_connections)
+
+
+class TestSanitizeFilename:
+    """F4.6: _sanitize_filename strips path traversal and unsafe chars."""
+
+    def test_strips_directory_components(self):
+        from loctran.server.server import _sanitize_filename
+
+        assert _sanitize_filename("../../etc/passwd") == "passwd"
+
+    def test_replaces_unsafe_chars(self):
+        from loctran.server.server import _sanitize_filename
+
+        result = _sanitize_filename("my file (1).pdf")
+        assert " " not in result
+        assert "(" not in result
+        assert result.endswith(".pdf")
+
+    def test_empty_name_returns_upload(self):
+        from loctran.server.server import _sanitize_filename
+
+        assert _sanitize_filename("") == "upload"
+
+    def test_safe_name_unchanged(self):
+        from loctran.server.server import _sanitize_filename
+
+        assert _sanitize_filename("report-2026.pdf") == "report-2026.pdf"
+
+
+class TestChooseFolderFixedPrompt:
+    """F4.8: choose_folder uses a fixed server-side prompt; ignores client input."""
+
+    def test_prompt_param_not_injected_into_applescript(self):
+        import sys
+
+        if sys.platform != "darwin":
+            pytest.skip("AppleScript only on macOS")
+
+        injected = "$(rm -rf /)"
+        captured = {}
+
+        def fake_check_output(cmd, **kw):
+            captured["cmd"] = cmd
+            return b"/Users/test/Documents\n"
+
+        with (
+            patch("loctran.server.store.init_db"),
+            patch("loctran.server.store.list_active_jobs", return_value=[]),
+            patch("loctran.server.server.check_ai_engine"),
+            patch(
+                "loctran.server.server.subprocess.check_output",
+                side_effect=fake_check_output,
+            ),
+        ):
+            from fastapi.testclient import TestClient
+
+            from loctran.server.server import app
+
+            with TestClient(app) as c:
+                c.get(f"/choose_folder?prompt={injected}")
+
+        script = " ".join(captured.get("cmd", []))
+        assert injected not in script
+        assert "Choose output folder" in script
+
+
+class TestRoleFilteredModels:
+    """F5.5: /api/models?role= filters vision vs translation models."""
+
+    def _make_fake_list(self, names):
+        m = MagicMock()
+        items = []
+        for n in names:
+            item = MagicMock()
+            item.model = n
+            items.append(item)
+        m.models = items
+        return m
+
+    def test_role_vision_returns_only_vision_models(self, client):
+        fake = self._make_fake_list(["llava:7b", "qwen2.5:3b", "moondream:latest"])
+        with patch("ollama.list", return_value=fake):
+            resp = client.get("/api/models?role=vision")
+        assert resp.status_code == 200
+        names = [m["name"] for m in resp.json()["models"]]
+        assert "llava:7b" in names
+        assert "moondream:latest" in names
+        assert "qwen2.5:3b" not in names
+
+    def test_role_translation_excludes_vision_models(self, client):
+        fake = self._make_fake_list(["llava:7b", "qwen2.5:3b", "gemma3:4b"])
+        with patch("ollama.list", return_value=fake):
+            resp = client.get("/api/models?role=translation")
+        assert resp.status_code == 200
+        names = [m["name"] for m in resp.json()["models"]]
+        assert "llava:7b" not in names
+        assert "qwen2.5:3b" in names
+        assert "gemma3:4b" in names
+
+    def test_no_role_returns_all_models(self, client):
+        fake = self._make_fake_list(["llava:7b", "qwen2.5:3b"])
+        with patch("ollama.list", return_value=fake):
+            resp = client.get("/api/models")
+        assert resp.status_code == 200
+        names = [m["name"] for m in resp.json()["models"]]
+        assert len(names) == 2

@@ -9,7 +9,7 @@ description = "Local-first document translation and conversion toolkit"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Anzal K. Shahul" }]
-license = "Apache-2.0"
+license = "AGPL-3.0-or-later"
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python :: 3",
@@ -34,8 +34,6 @@ dependencies = [
   "tqdm>=4.60.0",
   "langdetect>=1.0.9",
   "ollama>=0.3.0",
-  "websockets>=11.0",
-  "markdown>=3.3.0",
   "Pillow>=10.0.0",
   "pytesseract>=0.3.10",
   "pdfplumber>=0.10.0",
@@ -45,9 +43,8 @@ dependencies = [
   "python-multipart>=0.0.6",
   "psutil>=5.9.0",
   "pydantic>=2.0.0",
-  "requests>=2.28.0",
-  "fpdf>=1.7.2",
   "rich>=13.0.0",
+  "opencv-python-headless>=4.0.0",
 ]
 
 [project.urls]
@@ -55,15 +52,6 @@ Repository = "https://github.com/anzalks/loctran"
 "Bug Tracker" = "https://github.com/anzalks/loctran/issues"
 
 [project.optional-dependencies]
-ocr = [
-  "pytesseract>=0.3.10",
-  "pdfplumber>=0.10.0",
-]
-server = [
-  "fastapi>=0.100.0",
-  "uvicorn>=0.23.0",
-  "python-multipart>=0.0.6",
-]
 test = [
   "pytest>=7.0.0",
   "pytest-cov>=4.0.0",
@@ -73,7 +61,6 @@ test = [
 dev = [
   "playwright",
   "Pillow",
-  "reportlab",
 ]
 
 [project.scripts]

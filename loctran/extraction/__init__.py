@@ -17,19 +17,25 @@ re-export facades; import from them works too.
 # import from loctran.extraction.* at module level.
 from loctran.extract import (  # noqa: E402
     POSSIBLE_TESSERACT_PATHS,
+    TESSERACT_LANG_MAP,
+    _bbox_iou_exceeds,
     _clean_ocr_response,
     _configure_tesseract_path,
     _get_cv2,
     _get_ollama,
+    _get_ollama_client,
     _get_pdfium,
     _get_pdfplumber,
     _get_pillow_image,
     _get_pytesseract,
+    _get_tesseract_langs,
+    _iso_to_tesseract_lang,
     _missing_dependency_error,
+    _preprocess_image,
     _process_text_file,
+    _safe_stem,
     check_dependencies,
     detect_langs,
-    get_segments_digital,
     get_segments_hybrid,
     merge_words,
     ocr_with_ollama,
@@ -37,19 +43,23 @@ from loctran.extract import (  # noqa: E402
     process_individual_segment,
     process_page,
     rasterize_pdf,
-    sanitize_segments,
 )
 
 __all__ = [
     # ocr
     "POSSIBLE_TESSERACT_PATHS",
+    "TESSERACT_LANG_MAP",
     "_configure_tesseract_path",
     "_get_cv2",
+    "_get_ollama_client",
     "_get_pdfium",
     "_get_pdfplumber",
     "_get_pillow_image",
     "_get_pytesseract",
+    "_get_tesseract_langs",
+    "_iso_to_tesseract_lang",
     "_missing_dependency_error",
+    "_preprocess_image",
     "check_dependencies",
     "get_segments_hybrid",
     "process_individual_segment",
@@ -59,11 +69,10 @@ __all__ = [
     "ocr_with_ollama",
     # rasterize
     "rasterize_pdf",
-    # digital
-    "get_segments_digital",
     # segments
+    "_bbox_iou_exceeds",
+    "_safe_stem",
     "merge_words",
-    "sanitize_segments",
     # pipeline / orchestration
     "_process_text_file",
     "detect_langs",

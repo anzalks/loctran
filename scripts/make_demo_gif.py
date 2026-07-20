@@ -112,85 +112,56 @@ _CURSOR_JS = f"""
 
 
 def generate_french_pdf(output_path: Path) -> None:
-    """Write a French single-page PDF about Loctran to *output_path*."""
+    """Write a French single-page PDF about Loctran to *output_path* using Pillow."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    W, H = 2480, 3508  # A4 at ~300 DPI
+    img = Image.new("RGB", (W, H), "white")
+    draw = ImageDraw.Draw(img)
+
     try:
-        from fpdf import FPDF
+        title_font = ImageFont.truetype("Helvetica", 64)
+        subtitle_font = ImageFont.truetype("Helvetica", 40)
+        body_font = ImageFont.truetype("Helvetica", 36)
+        bold_font = ImageFont.truetype("Helvetica-Bold", 36)
+    except OSError:
+        title_font = ImageFont.load_default(64)
+        subtitle_font = ImageFont.load_default(40)
+        body_font = ImageFont.load_default(36)
+        bold_font = body_font
 
-        pdf = FPDF()
-        pdf.add_page()
-
-        # Title
-        pdf.set_font("Helvetica", "B", 18)
-        pdf.cell(0, 12, "Loctran", ln=True, align="C")
-        pdf.set_font("Helvetica", "I", 10)
-        pdf.cell(0, 7, "Traducteur de PDF Local et Prive", ln=True, align="C")
-        pdf.ln(6)
-
-        pdf.set_font("Helvetica", "", 10)
-        for para in _FRENCH_CONTENT.strip().split("\n\n"):
-            lines = para.strip().split("\n")
-            first = lines[0].strip()
-            # Skip the first paragraph (title already rendered)
-            if first.startswith("Loctran -"):
-                continue
-            # Section headers end with ":"
-            if first.endswith(":") or (len(lines) == 1 and first[0].isdigit()):
-                pdf.set_font("Helvetica", "B", 10)
-                pdf.multi_cell(0, 5, first)
-                pdf.set_font("Helvetica", "", 10)
-                for line in lines[1:]:
-                    stripped = line.strip()
-                    if stripped:
-                        pdf.multi_cell(0, 5, "   " + stripped)
-            else:
-                for line in lines:
-                    stripped = line.strip()
-                    if stripped:
-                        pdf.multi_cell(0, 5, stripped)
-            pdf.ln(3)
-
-        pdf.output(str(output_path))
-        return
-    except ImportError:
-        pass
-
-    # Fallback: write raw PDF bytes without any library
-    ops = []
-    y = 760
-    for line in _FRENCH_CONTENT.split("\n")[:45]:
-        safe = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-        ops.append(f"BT /F1 10 Tf 50 {y} Td ({safe}) Tj ET")
-        y -= 15
-    body_b = "\n".join(ops).encode("latin-1", errors="replace")
-    _write_raw_pdf(output_path, body_b)
-
-
-def _write_raw_pdf(path: Path, content: bytes) -> None:
-    objs = [
-        b"1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n",
-        b"2 0 obj\n<</Type/Pages/Kids[3 0 R]/Count 1>>\nendobj\n",
-        b"3 0 obj\n<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]"
-        b"/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>\nendobj\n",
-        b"4 0 obj\n<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>\nendobj\n",
-        b"5 0 obj\n<</Length " + str(len(content)).encode() + b">>\nstream\n"
-        + content
-        + b"\nendstream\nendobj\n",
-    ]
-    hdr = b"%PDF-1.4\n"
-    buf = bytearray(hdr)
-    offs = [0]
-    for obj in objs:
-        offs.append(len(buf))
-        buf.extend(obj)
-    xref = len(buf)
-    buf.extend(f"xref\n0 {len(offs)}\n".encode())
-    buf.extend(b"0000000000 65535 f \n")
-    for off in offs[1:]:
-        buf.extend(f"{off:010d} 00000 n \n".encode())
-    buf.extend(
-        f"trailer\n<</Size {len(offs)}/Root 1 0 R>>\nstartxref\n{xref}\n%%EOF\n".encode()
+    y = 180
+    draw.text((W // 2, y), "Loctran", fill="black", font=title_font, anchor="mt")
+    y += 90
+    draw.text(
+        (W // 2, y),
+        "Traducteur de PDF Local et Prive",
+        fill="gray",
+        font=subtitle_font,
+        anchor="mt",
     )
-    path.write_bytes(buf)
+    y += 120
+
+    for para in _FRENCH_CONTENT.strip().split("\n\n"):
+        lines = para.strip().split("\n")
+        first = lines[0].strip()
+        if first.startswith("Loctran -"):
+            continue
+        is_header = first.endswith(":") or (len(lines) == 1 and first[0].isdigit())
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            font = bold_font if is_header and line == lines[0] else body_font
+            draw.text((200, y), stripped, fill="black", font=font)
+            y += 48
+            if y > H - 200:
+                break
+        y += 24
+        if y > H - 200:
+            break
+
+    img.save(str(output_path), "PDF", resolution=300.0)
 
 
 # ── Server helpers ────────────────────────────────────────────────────────────
@@ -287,6 +258,12 @@ def move_to(
         else:
             page.wait_for_timeout(step_ms)
     return x, y
+
+
+def _scroll_into_view(page, locator) -> None:
+    """Scroll the element into the viewport so bounding_box returns visible coords."""
+    locator.scroll_into_view_if_needed()
+    page.wait_for_timeout(150)
 
 
 def _bbox_centre(bbox: dict) -> tuple[float, float]:
@@ -445,6 +422,7 @@ def run_demo(base_url: str, pdf_path: Path, output_gif: Path) -> None:
 
             trans_sel = page.locator("#translate-model")
             trans_sel.wait_for(state="visible", timeout=8000)
+            _scroll_into_view(page, trans_sel)
             ts_bb = trans_sel.bounding_box()
             if ts_bb:
                 cx, cy = move_to(
@@ -471,6 +449,7 @@ def run_demo(base_url: str, pdf_path: Path, output_gif: Path) -> None:
             # ── Step 5: Enable AI OCR ─────────────────────────────────────
             print("  Step 5 · Enable AI OCR")
             ai_chk = page.locator("#ai-ocr-checkbox")
+            _scroll_into_view(page, ai_chk)
             ai_bb = ai_chk.bounding_box()
             if ai_bb:
                 cx, cy = move_to(
@@ -493,6 +472,7 @@ def run_demo(base_url: str, pdf_path: Path, output_gif: Path) -> None:
             try:
                 vis_sel = page.locator("#vision-model")
                 vis_sel.wait_for(state="visible", timeout=5000)
+                _scroll_into_view(page, vis_sel)
                 vs_bb = vis_sel.bounding_box()
                 if vs_bb:
                     cx, cy = move_to(
@@ -523,6 +503,7 @@ def run_demo(base_url: str, pdf_path: Path, output_gif: Path) -> None:
             # ── Step 7: Start translation ─────────────────────────────────
             print("  Step 7 · Start translation")
             start_btn = page.locator("#start-btn")
+            _scroll_into_view(page, start_btn)
             sb_bb = start_btn.bounding_box()
             if sb_bb:
                 cx, cy = move_to(
@@ -575,6 +556,7 @@ def run_demo(base_url: str, pdf_path: Path, output_gif: Path) -> None:
             # ── Step 9: Open result ───────────────────────────────────────
             print("  Step 9 · Open result")
             result_link = page.locator("#result-link")
+            _scroll_into_view(page, result_link)
             rl_bb = result_link.bounding_box()
             if rl_bb:
                 cx, cy = move_to(
