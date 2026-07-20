@@ -119,13 +119,17 @@ def get_overlay_html(
         # Height-based font-size candidate (cqw = % of container width)
         height_cand = (effective_height_p / aspect_ratio) * fudge
 
-        # F2.2: width-based font-size candidate — always based on ORIGINAL text
-        # so translated text (which may be longer) doesn't shrink the font
+        # F2.2: width-based candidate — use measured char_width when available
         display_text = translation if is_translated else original_text
         orig_n_chars = (
             max(1, len(original_text)) if original_text else max(1, len(display_text))
         )
-        width_cand = width_p / (_CHAR_WIDTH_FACTOR * orig_n_chars)
+        measured_cw = s.get("char_width")
+        if measured_cw and measured_cw > 0 and width > 0:
+            cw_ratio = measured_cw / (s.get("min_word_height") or measured_cw)
+            width_cand = width_p / (cw_ratio * orig_n_chars)
+        else:
+            width_cand = width_p / (_CHAR_WIDTH_FACTOR * orig_n_chars)
 
         font_cqw = min(height_cand, width_cand)
         font_size_expr = f"{font_cqw:.4f}cqw"

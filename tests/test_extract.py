@@ -353,7 +353,7 @@ class TestColumnGapSplitsSegments:
 
         fake_img = RealImage.new("RGB", (800, 100), color=(255, 255, 255))
 
-        def _fake_process(words, segs, image_path, use_ai, img, vision_model):
+        def _fake_process(words, segs, image_path, use_ai, img, vision_model, **kw):
             text = " ".join(w["text"] for w in words)
             segs.append({"text": text, "bbox": [0, 0, 30, 12], "method": "OCR"})
 

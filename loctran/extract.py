@@ -333,6 +333,15 @@ def _preprocess_image(img: Any) -> Any:
         return img
 
 
+def _median_char_width(words: "list[dict[str, Any]]") -> float | None:
+    """Return median per-character width in pixels from word bboxes."""
+    cw = [w["width"] / len(w["text"]) for w in words if len(w.get("text", "")) > 0]
+    if not cw:
+        return None
+    cw.sort()
+    return cw[len(cw) // 2]
+
+
 def process_individual_segment(
     word_list: "list[dict[str, Any]]",
     segments: "list[dict[str, Any]]",
@@ -340,6 +349,7 @@ def process_individual_segment(
     use_ai: bool,
     img_obj: Any,
     vision_model: str = "glm-ocr",
+    measured_char_width: float | None = None,
 ) -> None:
     if not word_list:
         return
@@ -397,6 +407,8 @@ def process_individual_segment(
         "min_word_height": med_wh,
         "method": method,
     }
+    if measured_char_width is not None:
+        seg["char_width"] = measured_char_width
     if ai_ocr_fallback:
         seg["ai_ocr_fallback"] = True
     segments.append(seg)
@@ -423,12 +435,22 @@ def merge_words(
         final_top = max(0, med_top - (med_height * 0.2))
         final_h = med_height * 1.5
     text = " ".join(w["text"] for w in word_list)
-    return {
+    cw = [
+        (w["x1"] - w["x0"]) / len(w["text"])
+        for w in word_list
+        if len(w.get("text", "")) > 0
+    ]
+    cw.sort()
+    med_char_w = (cw[len(cw) // 2] * sx) if cw else None
+    seg: dict[str, Any] = {
         "text": text,
         "bbox": [x0 * sx, final_top * sy, (x1 - x0) * sx, final_h * sy],
         "min_word_height": median_height * sy,
         "method": "Digital",
     }
+    if med_char_w is not None:
+        seg["char_width"] = med_char_w
+    return seg
 
 
 def get_segments_hybrid(
@@ -681,14 +703,28 @@ def get_segments_hybrid(
                     line[i]["left"] - (line[i - 1]["left"] + line[i - 1]["width"])
                     > gap_thr
                 ):
+                    seg_cw = _median_char_width(cur)
                     process_individual_segment(
-                        cur, segments, image_path, use_ai, img, vision_model
+                        cur,
+                        segments,
+                        image_path,
+                        use_ai,
+                        img,
+                        vision_model,
+                        measured_char_width=seg_cw,
                     )
                     cur = []
                 cur.append(line[i])
             if cur:
+                seg_cw = _median_char_width(cur)
                 process_individual_segment(
-                    cur, segments, image_path, use_ai, img, vision_model
+                    cur,
+                    segments,
+                    image_path,
+                    use_ai,
+                    img,
+                    vision_model,
+                    measured_char_width=seg_cw,
                 )
     except Exception as e:
         logger.error(
