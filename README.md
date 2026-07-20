@@ -182,3 +182,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, running tests, and
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 Apache 2.0 — © 2026 Anzal K Shahul
+
+The recommended AI models (TranslateGemma, GLM-OCR) carry their own licenses. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for details.
