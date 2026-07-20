@@ -289,6 +289,12 @@ def move_to(
     return x, y
 
 
+def _scroll_into_view(page, locator) -> None:
+    """Scroll the element into the viewport so bounding_box returns visible coords."""
+    locator.scroll_into_view_if_needed()
+    page.wait_for_timeout(150)
+
+
 def _bbox_centre(bbox: dict) -> tuple[float, float]:
     return bbox["x"] + bbox["width"] / 2, bbox["y"] + bbox["height"] / 2
 
@@ -445,6 +451,7 @@ def run_demo(base_url: str, pdf_path: Path, output_gif: Path) -> None:
 
             trans_sel = page.locator("#translate-model")
             trans_sel.wait_for(state="visible", timeout=8000)
+            _scroll_into_view(page, trans_sel)
             ts_bb = trans_sel.bounding_box()
             if ts_bb:
                 cx, cy = move_to(
@@ -471,6 +478,7 @@ def run_demo(base_url: str, pdf_path: Path, output_gif: Path) -> None:
             # ── Step 5: Enable AI OCR ─────────────────────────────────────
             print("  Step 5 · Enable AI OCR")
             ai_chk = page.locator("#ai-ocr-checkbox")
+            _scroll_into_view(page, ai_chk)
             ai_bb = ai_chk.bounding_box()
             if ai_bb:
                 cx, cy = move_to(
@@ -493,6 +501,7 @@ def run_demo(base_url: str, pdf_path: Path, output_gif: Path) -> None:
             try:
                 vis_sel = page.locator("#vision-model")
                 vis_sel.wait_for(state="visible", timeout=5000)
+                _scroll_into_view(page, vis_sel)
                 vs_bb = vis_sel.bounding_box()
                 if vs_bb:
                     cx, cy = move_to(
@@ -523,6 +532,7 @@ def run_demo(base_url: str, pdf_path: Path, output_gif: Path) -> None:
             # ── Step 7: Start translation ─────────────────────────────────
             print("  Step 7 · Start translation")
             start_btn = page.locator("#start-btn")
+            _scroll_into_view(page, start_btn)
             sb_bb = start_btn.bounding_box()
             if sb_bb:
                 cx, cy = move_to(
@@ -575,6 +585,7 @@ def run_demo(base_url: str, pdf_path: Path, output_gif: Path) -> None:
             # ── Step 9: Open result ───────────────────────────────────────
             print("  Step 9 · Open result")
             result_link = page.locator("#result-link")
+            _scroll_into_view(page, result_link)
             rl_bb = result_link.bounding_box()
             if rl_bb:
                 cx, cy = move_to(
