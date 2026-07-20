@@ -333,33 +333,6 @@ def _preprocess_image(img: Any) -> Any:
         return img
 
 
-def get_segments_digital(
-    pdf_path: "str | Path", page_index: int
-) -> "list[dict[str, Any]]":
-    segments: list[dict[str, Any]] = []
-    try:
-        pdfplumber = _get_pdfplumber()
-        with pdfplumber.open(pdf_path) as pdf:
-            page = pdf.pages[page_index]
-            words = page.extract_words()
-            for w in words:
-                segments.append(
-                    {
-                        "text": w["text"],
-                        "bbox": [
-                            w["x0"],
-                            w["top"],
-                            w["x1"] - w["x0"],
-                            w["bottom"] - w["top"],
-                        ],
-                        "method": "Digital",
-                    }
-                )
-    except Exception as e:
-        logger.debug("Failed to extract digital segments on page %d: %s", page_index, e)
-    return segments
-
-
 def process_individual_segment(
     word_list: "list[dict[str, Any]]",
     segments: "list[dict[str, Any]]",
@@ -417,10 +390,6 @@ def process_individual_segment(
     segments.append(
         {"text": full_text, "bbox": bbox, "min_word_height": med_wh, "method": method}
     )
-
-
-def sanitize_segments(segments: "list[dict[str, Any]]") -> "list[dict[str, Any]]":
-    return list(segments)
 
 
 def merge_words(

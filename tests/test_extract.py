@@ -286,27 +286,6 @@ class TestRasterizePdf:
             assert p.endswith(".jpg")
 
 
-class TestDigitalExtractionDetectsText:
-    def test_digital_extraction_returns_non_empty_segments(self):
-        """get_segments_digital must return segments for a page that has words."""
-        fake_word = {"text": "Hello", "x0": 10, "top": 20, "x1": 50, "bottom": 34}
-        fake_page = MagicMock()
-        fake_page.extract_words.return_value = [fake_word]
-        fake_pdf = MagicMock()
-        fake_pdf.__enter__ = MagicMock(return_value=fake_pdf)
-        fake_pdf.__exit__ = MagicMock(return_value=False)
-        fake_pdf.pages = [fake_page]
-
-        with patch("loctran.extract._get_pdfplumber") as mock_pp:
-            mock_pp.return_value = MagicMock(open=MagicMock(return_value=fake_pdf))
-            import loctran.extract as ext
-
-            segs = ext.get_segments_digital("dummy.pdf", 0)
-
-        assert len(segs) >= 1
-        assert segs[0]["text"] == "Hello"
-
-
 class TestForceOcrSkipsDigitalPath:
     def test_force_ocr_does_not_call_pdfplumber(self, tmp_path):
         """When force_ocr=True, process_file must not call pdfplumber.open."""
@@ -428,21 +407,6 @@ class TestCleanOcrResponse:
         assert ext._clean_ocr_response("Hello world") == "Hello world"
 
 
-class TestSanitizeSegments:
-    def test_passthrough(self):
-        import loctran.extract as ext
-
-        segs = [{"bbox": [0, 0, 100, 20], "text": "Hello"}]
-        result = ext.sanitize_segments(segs)
-        assert len(result) == 1
-        assert result[0]["text"] == "Hello"
-
-    def test_empty_input(self):
-        import loctran.extract as ext
-
-        assert ext.sanitize_segments([]) == []
-
-
 class TestMergeWords:
     def _word(self, text, x0, x1, top, bottom, height):
         return {
@@ -537,33 +501,6 @@ class TestProcessTextFile:
                 progress_callback=lambda msg, pct: calls.append((msg, pct)),
             )
         assert len(calls) >= 2
-
-
-class TestGetSegmentsDigital:
-    def test_returns_segments_from_words(self):
-        import loctran.extract as ext
-
-        fake_word = {"text": "Hello", "x0": 10, "x1": 50, "top": 5, "bottom": 20}
-        fake_page = MagicMock()
-        fake_page.extract_text.return_value = "Hello"
-        fake_page.extract_words.return_value = [fake_word]
-        fake_pdf_ctx = MagicMock()
-        fake_pdf_ctx.__enter__ = MagicMock(return_value=MagicMock(pages=[fake_page]))
-        fake_pdf_ctx.__exit__ = MagicMock(return_value=False)
-        fake_pdfplumber = MagicMock()
-        fake_pdfplumber.open.return_value = fake_pdf_ctx
-        with patch("loctran.extract._get_pdfplumber", return_value=fake_pdfplumber):
-            segs = ext.get_segments_digital("dummy.pdf", 0)
-        assert isinstance(segs, list)
-
-    def test_returns_empty_on_exception(self):
-        import loctran.extract as ext
-
-        with patch(
-            "loctran.extract._get_pdfplumber", side_effect=RuntimeError("no pdfplumber")
-        ):
-            segs = ext.get_segments_digital("dummy.pdf", 0)
-        assert segs == []
 
 
 class TestHybridAndProcessPageCoverage:
@@ -747,15 +684,6 @@ class TestExtractMain:
             ext.main()
 
         process_file_mock.assert_not_called()
-
-    def test_returns_empty_on_exception(self):
-        import loctran.extract as ext
-
-        with patch(
-            "loctran.extract._get_pdfplumber", side_effect=RuntimeError("no pdfplumber")
-        ):
-            segs = ext.get_segments_digital("dummy.pdf", 0)
-        assert segs == []
 
 
 # ---------------------------------------------------------------------------

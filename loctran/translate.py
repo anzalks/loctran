@@ -144,9 +144,7 @@ def check_ollama_connection(model_name: str) -> bool:
     try:
         ollama = _get_ollama()
         models_resp = ollama.list()
-        available = {
-            _norm_model_tag(m["model"]) for m in models_resp.get("models", [])
-        }
+        available = {_norm_model_tag(m["model"]) for m in models_resp.get("models", [])}
         target = _norm_model_tag(model_name)
         if target not in available:
             logger.warning(
@@ -372,9 +370,7 @@ def _translate_chunk(
                 if fallback is not None:
                     results[c["id"]] = fallback
 
-        logger.debug(
-            "Chunk batch mapped %d/%d", len(results), len(chunk)
-        )
+        logger.debug("Chunk batch mapped %d/%d", len(results), len(chunk))
         return results
 
     except Exception as exc:
@@ -389,9 +385,7 @@ def _translate_chunk(
     # Attempt 2: sequential per-item via shared retry helper (F3.11)
     results = {}
     for item in chunk:
-        translated = _translate_single_with_retry(
-            item["text"], target_lang, model
-        )
+        translated = _translate_single_with_retry(item["text"], target_lang, model)
         if translated is not None:
             results[item["id"]] = translated
         else:
@@ -422,9 +416,7 @@ def _group_segments_into_paragraphs(
     if not segments:
         return []
 
-    sorted_segs = sorted(
-        segments, key=lambda s: (s["bbox"][1], s["bbox"][0])
-    )
+    sorted_segs = sorted(segments, key=lambda s: (s["bbox"][1], s["bbox"][0]))
     raw_heights = [s["bbox"][3] for s in sorted_segs if s["bbox"][3] > 0]
     if raw_heights:
         raw_heights.sort()
@@ -449,9 +441,7 @@ def _group_segments_into_paragraphs(
     return groups
 
 
-def _redistribute_translation(
-    group: list[dict[str, Any]], translation: str
-) -> None:
+def _redistribute_translation(group: list[dict[str, Any]], translation: str) -> None:
     """Distribute *translation* proportionally across *group* segments (F3.8).
 
     Uses word-level distribution to avoid mid-word splits.  When a segment
@@ -554,9 +544,7 @@ def translate_segments(
         logger.debug("Gap-fill: retrying %d missing segments", len(missing))
         time.sleep(0.5)
         for item in missing:
-            translated = _translate_single_with_retry(
-                item["text"], target_lang, model
-            )
+            translated = _translate_single_with_retry(item["text"], target_lang, model)
             if translated is not None:
                 results[item["id"]] = translated
                 _memo[(item["text"], target_lang, model)] = translated
@@ -755,9 +743,7 @@ def process_folder(
                     translated_text = "\n\n".join(
                         _html.escape(s["translation"])
                         if s.get("translation")
-                        else (
-                            f"[untranslated: {_html.escape(s['text'][:40])}…]"
-                        )
+                        else (f"[untranslated: {_html.escape(s['text'][:40])}…]")
                         for s in segments_to_trans
                     )
                     translated_cls = (
@@ -766,9 +752,7 @@ def process_folder(
                         else "text-missing"
                     )
                     n_untrans = sum(
-                        1
-                        for s in segments_to_trans
-                        if not s.get("translation")
+                        1 for s in segments_to_trans if not s.get("translation")
                     )
                     untrans_note = (
                         f'<p class="untranslated-note">'
@@ -805,9 +789,7 @@ def process_folder(
 
                 # F3.7: filter by word character presence, not bare length
                 segments_to_trans = [
-                    s
-                    for s in segments
-                    if _HAS_WORD_CHAR.search(s.get("text", ""))
+                    s for s in segments if _HAS_WORD_CHAR.search(s.get("text", ""))
                 ]
 
                 if not segments_to_trans:
@@ -820,9 +802,9 @@ def process_folder(
                     # F3.9: same-language detection — skip LLM if source = target
                     same_lang = False
                     if target_iso:
-                        sample = " ".join(
-                            s["text"] for s in segments_to_trans[:5]
-                        )[:500]
+                        sample = " ".join(s["text"] for s in segments_to_trans[:5])[
+                            :500
+                        ]
                         try:
                             from langdetect import (  # type: ignore
                                 DetectorFactory,
@@ -851,9 +833,7 @@ def process_folder(
                         groups = _group_segments_into_paragraphs(segments_to_trans)
                         combined = [
                             {
-                                "text": " ".join(
-                                    s["text"] for s in grp
-                                ),
+                                "text": " ".join(s["text"] for s in grp),
                                 "bbox": grp[0]["bbox"],
                             }
                             for grp in groups

@@ -15,4 +15,4 @@ RUN pip install --no-cache-dir -e .
 ENV OLLAMA_HOST=http://host.docker.internal:11434
 
 EXPOSE 8000
-CMD ["loctran", "serve", "--no-browser", "--host", "0.0.0.0"]
+CMD ["loctran", "serve", "--no-desktop", "--no-browser", "--host", "0.0.0.0"]

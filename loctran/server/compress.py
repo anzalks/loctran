@@ -190,9 +190,7 @@ def compress_image_to_size(input_path: str, output_path: str, target_size: int) 
     }
 
 
-def _convert_pdf_to_images(
-    input_path: str, output_path: str, target_size: int
-) -> dict:
+def _convert_pdf_to_images(input_path: str, output_path: str, target_size: int) -> dict:
     """F6.3: Convert all PDF pages to images; zip when >1 page."""
     pdf = pdfium.PdfDocument(input_path)
     n_pages = len(pdf)

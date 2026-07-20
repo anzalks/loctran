@@ -36,7 +36,6 @@ from loctran.extract import (  # noqa: E402
     _safe_stem,
     check_dependencies,
     detect_langs,
-    get_segments_digital,
     get_segments_hybrid,
     merge_words,
     ocr_with_ollama,
@@ -44,7 +43,6 @@ from loctran.extract import (  # noqa: E402
     process_individual_segment,
     process_page,
     rasterize_pdf,
-    sanitize_segments,
 )
 
 __all__ = [
@@ -71,13 +69,10 @@ __all__ = [
     "ocr_with_ollama",
     # rasterize
     "rasterize_pdf",
-    # digital
-    "get_segments_digital",
     # segments
     "_bbox_iou_exceeds",
     "_safe_stem",
     "merge_words",
-    "sanitize_segments",
     # pipeline / orchestration
     "_process_text_file",
     "detect_langs",

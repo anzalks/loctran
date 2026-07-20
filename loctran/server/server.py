@@ -254,14 +254,13 @@ def run_pipeline(
                     os.remove(file_path)
                     logger.debug(f"Cleaned up upload file: {file_path}")
             except Exception as e:
-                logger.warning(
-                    f"Failed to cleanup upload file {file_path}: {e}"
-                )
+                logger.warning(f"Failed to cleanup upload file {file_path}: {e}")
 
 
 def run_conversion(
     job_id: str,
     file_path: Path,
+    original_filename: str,
     target_size_str: str,
     output_root: Path = OUTPUT_DIR,
     output_format: str = "pdf",
@@ -291,7 +290,7 @@ def run_conversion(
             except ValueError as e:
                 raise Exception(f"Invalid target size: {e}")
 
-            input_stem = file_path.stem
+            input_stem = Path(original_filename).stem
             if not output_format.startswith("."):
                 output_format = f".{output_format}"
 
@@ -334,9 +333,7 @@ def run_conversion(
                     os.remove(file_path)
                     logger.debug(f"Cleaned up upload file: {file_path}")
             except Exception as e:
-                logger.warning(
-                    f"Failed to cleanup upload file {file_path}: {e}"
-                )
+                logger.warning(f"Failed to cleanup upload file {file_path}: {e}")
 
 
 # --- Lifecycle Helpers ---
@@ -799,8 +796,7 @@ def start_process(
         raise HTTPException(
             status_code=400,
             detail=(
-                "OCR engine must be a vision model."
-                " Please select a valid vision model."
+                "OCR engine must be a vision model. Please select a valid vision model."
             ),
         )
 
@@ -899,6 +895,7 @@ def start_conversion(
         run_conversion,
         job_id,
         Path(saved_path),
+        filename,
         target_size,
         output_root,
         output_format,
@@ -959,11 +956,19 @@ def get_all_models(role: Optional[str] = None):
     try:
         result = _ollama.list()
         models = result.models if hasattr(result, "models") else list(result)
-        all_names = [m.model for m in models if getattr(m, "model", None)]
+        all_names: list[str] = [
+            str(getattr(m, "model", "")) for m in models if getattr(m, "model", None)
+        ]
         if role == "vision":
-            names = [n for n in all_names if any(kw in n.lower() for kw in _VISION_KEYWORDS)]
+            names = [
+                n for n in all_names if any(kw in n.lower() for kw in _VISION_KEYWORDS)
+            ]
         elif role == "translation":
-            names = [n for n in all_names if not any(kw in n.lower() for kw in _VISION_KEYWORDS)]
+            names = [
+                n
+                for n in all_names
+                if not any(kw in n.lower() for kw in _VISION_KEYWORDS)
+            ]
         else:
             names = all_names
         return {"models": [{"name": n} for n in names]}

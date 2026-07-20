@@ -89,7 +89,6 @@ class TestModelPolicy:
             patch("loctran.server.store.init_db"),
             patch("loctran.server.store.list_active_jobs", return_value=[]),
             patch("loctran.server.server.check_ai_engine"),
-            patch("loctran.server.server.threading.Thread"),
             patch(
                 "loctran.server.server.SETTINGS",
                 SimpleNamespace(

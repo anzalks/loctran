@@ -67,8 +67,7 @@ def upsert_job(job: dict) -> None:
     with _db_lock:  # F4.17: serialise writes
         con = _connect()
         con.execute(
-            "INSERT OR REPLACE INTO jobs (job_id, data, updated_at)"
-            " VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO jobs (job_id, data, updated_at) VALUES (?, ?, ?)",
             (job_id, json.dumps(job), time.time()),
         )
         con.commit()

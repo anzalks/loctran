@@ -25,7 +25,6 @@ def client():
         patch("loctran.server.store.init_db"),
         patch("loctran.server.store.list_active_jobs", return_value=[]),
         patch("loctran.server.server.check_ai_engine"),
-        patch("loctran.server.server.threading.Thread"),
     ):
         from fastapi.testclient import TestClient
 
@@ -108,35 +107,33 @@ class TestProcess:
         """F4.11: unknown model keyword now warns instead of returning 400."""
         saved = tmp_path / "doc.pdf"
         saved.write_bytes(b"%PDF-1.4")
-        with patch("loctran.server.server.threading.Thread"):
-            resp = client.post(
-                "/process",
-                params={
-                    "filename": "doc.pdf",
-                    "saved_path": str(saved),
-                    "lang": "French",
-                    "model": "badmodel:latest",
-                    "vision_model": "llava:latest",
-                },
-            )
+        resp = client.post(
+            "/process",
+            params={
+                "filename": "doc.pdf",
+                "saved_path": str(saved),
+                "lang": "French",
+                "model": "badmodel:latest",
+                "vision_model": "llava:latest",
+            },
+        )
         assert resp.status_code == 200
         assert "job_id" in resp.json()
 
     def test_queues_valid_job(self, client, tmp_path):
         saved = tmp_path / "doc.pdf"
         saved.write_bytes(b"%PDF-1.4")
-        with patch("loctran.server.server.threading.Thread"):
-            resp = client.post(
-                "/process",
-                params={
-                    "filename": "doc.pdf",
-                    "saved_path": str(saved),
-                    "lang": "French",
-                    "model": "qwen2.5:7b",
-                    "vision_model": "llava:latest",
-                    "output_path": str(tmp_path),
-                },
-            )
+        resp = client.post(
+            "/process",
+            params={
+                "filename": "doc.pdf",
+                "saved_path": str(saved),
+                "lang": "French",
+                "model": "qwen2.5:7b",
+                "vision_model": "llava:latest",
+                "output_path": str(tmp_path),
+            },
+        )
         assert resp.status_code == 200
         assert "job_id" in resp.json()
 
@@ -157,17 +154,16 @@ class TestConvert:
     def test_queues_valid_conversion(self, client, tmp_path):
         saved = tmp_path / "doc.pdf"
         saved.write_bytes(b"%PDF-1.4")
-        with patch("loctran.server.server.threading.Thread"):
-            resp = client.post(
-                "/convert",
-                params={
-                    "filename": "doc.pdf",
-                    "saved_path": str(saved),
-                    "target_size": "1MB",
-                    "output_format": "pdf",
-                    "output_path": str(tmp_path),
-                },
-            )
+        resp = client.post(
+            "/convert",
+            params={
+                "filename": "doc.pdf",
+                "saved_path": str(saved),
+                "target_size": "1MB",
+                "output_format": "pdf",
+                "output_path": str(tmp_path),
+            },
+        )
         assert resp.status_code == 200
         assert "job_id" in resp.json()
 
@@ -241,7 +237,9 @@ class TestRunConversion:
                 "reduction": "20%",
             },
         ):
-            srv.run_conversion(job_id, f, "1MB", tmp_path)
+            srv.run_conversion(
+                job_id, f, "in.pdf", "1MB", tmp_path,
+            )
         assert srv.jobs[job_id]["status"] == "completed"
 
     def test_conversion_failure_sets_status_failed(self, tmp_path):
@@ -263,7 +261,9 @@ class TestRunConversion:
             "loctran.server.server.compress_file",
             side_effect=RuntimeError("bad compress"),
         ):
-            srv.run_conversion(job_id, f, "1MB", tmp_path)
+            srv.run_conversion(
+                job_id, f, "in.pdf", "1MB", tmp_path,
+            )
         assert srv.jobs[job_id]["status"] == "failed"
 
 
@@ -603,8 +603,6 @@ class TestChooseFolderFixedPrompt:
         with patch("loctran.server.store.init_db"), patch(
             "loctran.server.store.list_active_jobs", return_value=[]
         ), patch("loctran.server.server.check_ai_engine"), patch(
-            "loctran.server.server.threading.Thread"
-        ), patch(
             "loctran.server.server.subprocess.check_output", side_effect=fake_check_output
         ):
             from fastapi.testclient import TestClient

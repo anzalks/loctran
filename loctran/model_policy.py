@@ -158,9 +158,7 @@ def ensure_startup_model(
             "pulled": pulled,
             "warning": warning,
             "required_models": [selected_model],
-            "missing_models": (
-                [] if (local_models or pulled) else [selected_model]
-            ),
+            "missing_models": ([] if (local_models or pulled) else [selected_model]),
             "pulled_models": [selected_model] if pulled else [],
             "verified": bool(local_models or pulled),
         }
