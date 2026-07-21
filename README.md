@@ -1,6 +1,6 @@
 # Loctran — private AI PDF translator
 
-[![CI](https://github.com/anzalks/loctran/actions/workflows/ci.yml/badge.svg)](https://github.com/anzalks/loctran/actions/workflows/ci.yml)
+[![CI](https://github.com/anzalks/loctran/actions/workflows/release.yml/badge.svg)](https://github.com/anzalks/loctran/actions/workflows/release.yml)
 [![codecov](https://codecov.io/gh/anzalks/loctran/branch/main/graph/badge.svg)](https://codecov.io/gh/anzalks/loctran)
 [![PyPI](https://img.shields.io/pypi/v/loctran)](https://pypi.org/project/loctran/)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
