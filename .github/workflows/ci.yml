@@ -6,10 +6,6 @@ on:
     tags: ['v*']
   pull_request:
 
-concurrency:
-  group: ci-${{ github.sha }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
