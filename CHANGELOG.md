@@ -3,9 +3,28 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/) and this project adheres to Semantic Versioning where practical.
 
-## [Unreleased]
+## [0.1.3] - 2026-07-21
 
-### 2026-07-20 — Full audit fixes (F1.1–F7.9)
+### Fixed
+- **AI OCR crash**: full-page AI OCR fallback produced `bbox: None` segments that crashed the translation pipeline and overlay renderer. Segments now get a full-page bounding box.
+- **OCR confidence filter**: `min_conf` parameter was accepted but ignored — inverted-pass words with confidence as low as 1 leaked through and could overwrite better normal-pass words.
+- **Ollama SDK compatibility**: `translate.py`, `diagnostics.py` used dict-style access (`resp["models"]`) that breaks with newer Ollama SDK versions returning Pydantic objects. Now handles both.
+- **`--debug` flag ignored**: server logging was configured at import time before the CLI set `LOCTRAN_DEBUG`. Added `reconfigure_logging()` called after env var is set.
+- **Orphaned ollama process**: `setup_deps.py` started `ollama serve` via `Popen` but discarded the handle. Now stored in `_ollama_proc` for cleanup on exit.
+- **Conversion progress not persisted**: `run_conversion`'s progress updates wrote to in-memory dict only, skipping `upsert_job()`. Server restart during conversion lost all state.
+- **Windows Tesseract path**: hardcoded `C:\Users\AppData\...` was structurally wrong. Now uses `Path.home() / "AppData" / ...` for the actual user directory.
+- **Dead loop in translate.py**: `for s in segments_to_trans` inside `if not segments_to_trans` never executed. Fixed to iterate the unfiltered `segments` list.
+- **None-bbox segments in renderer**: `render.py` and `_group_segments_into_paragraphs` now gracefully handle segments without bounding boxes (from text files and AI OCR).
+- **Model name matching**: `diagnostics.py` used `startswith` to match model names, causing false positives. Now compares base names exactly.
+- **Path validation**: `/process` and `/convert` endpoints now log a warning when `saved_path` is outside `UPLOAD_DIR`.
+
+### Changed
+- **CI**: removed duplicate `typecheck` job; bumped actions to v5 for Node.js 20+ compatibility.
+- **Tests**: comprehensive coverage uplift — 415 tests, 89% overall coverage (extract.py 96%, translate.py 92%, server.py 82%).
+- **Test reliability**: eliminated race conditions in pull-model and setup-install tests by mocking `threading.Thread`; made path assertions OS-independent for Windows CI.
+- **Bump script**: added preflight checks (dirty tree, wrong branch), replaced blind string replace in docs with targeted regexes, reordered tag/push to avoid orphaned tags, extended version regex for PEP 440.
+
+### Previous — Full audit fixes (F1.1–F7.9)
 
 #### Fixed
 - **Extraction / OCR (F1.x)**: page-range clamp, DPI cap, empty-text guard, timeout, retry on OCR failure, correct language mapping for Tesseract.
