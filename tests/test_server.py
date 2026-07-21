@@ -955,9 +955,19 @@ class TestOllamaStatusEndpoint:
 
 class TestPullModelEndpoint:
     def test_pull_model_starts_thread(self, client):
-        resp = client.post("/api/pull-model", json={"model": "qwen2.5:7b"})
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "pulling"
+        from loctran.server import server as srv
+
+        old = dict(srv._model_pull_status)
+        try:
+            with patch("loctran.server.server.threading.Thread"):
+                resp = client.post(
+                    "/api/pull-model", json={"model": "qwen2.5:7b"}
+                )
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "pulling"
+        finally:
+            srv._model_pull_status.clear()
+            srv._model_pull_status.update(old)
 
     def test_pull_model_missing_field(self, client):
         resp = client.post("/api/pull-model", json={})
@@ -1034,16 +1044,19 @@ class TestSetupEndpoints:
         old = dict(srv._setup_progress)
         srv._setup_progress["running"] = False
         try:
-            with patch(
-                "loctran.setup_deps.install_all", return_value={"success": True}
+            with (
+                patch("loctran.server.server.threading.Thread"),
+                patch(
+                    "loctran.setup_deps.install_all",
+                    return_value={"success": True},
+                ),
             ):
-                resp = client.post("/api/setup/install", json={"component": "all"})
+                resp = client.post(
+                    "/api/setup/install", json={"component": "all"}
+                )
             assert resp.status_code == 200
             assert resp.json()["started"] is True
         finally:
-            import time as _time
-
-            _time.sleep(0.1)
             srv._setup_progress.clear()
             srv._setup_progress.update(old)
 
@@ -1066,15 +1079,16 @@ class TestSetupEndpoints:
         old = dict(srv._setup_progress)
         srv._setup_progress["running"] = False
         try:
-            with patch(
-                "loctran.setup_deps.install_all", return_value={"success": True}
+            with (
+                patch("loctran.server.server.threading.Thread"),
+                patch(
+                    "loctran.setup_deps.install_all",
+                    return_value={"success": True},
+                ),
             ):
                 resp = client.post("/api/setup/install")
             assert resp.status_code == 200
         finally:
-            import time as _time
-
-            _time.sleep(0.1)
             srv._setup_progress.clear()
             srv._setup_progress.update(old)
 
