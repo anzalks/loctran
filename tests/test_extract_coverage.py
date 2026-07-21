@@ -179,7 +179,7 @@ class TestIsoToTesseractLang:
 
 
 class TestRasterizePdfErrors:
-    def test_password_protected(self):
+    def test_password_protected(self, tmp_path):
         import loctran.extract as ext
 
         from loctran.exceptions import ExtractionError
@@ -189,7 +189,7 @@ class TestRasterizePdfErrors:
 
         with patch.object(ext, "_get_pdfium", return_value=fake_pdfium):
             with pytest.raises(ExtractionError, match="password"):
-                ext.rasterize_pdf("dummy.pdf", Path("/tmp"))
+                ext.rasterize_pdf("dummy.pdf", tmp_path)
 
     def test_zero_pages(self, tmp_path):
         import loctran.extract as ext
@@ -1352,8 +1352,8 @@ class TestMainEdge:
         ):
             ext.main()
 
-        call_args = mock_pf.call_args
-        assert str(out) in str(call_args)
+        positional_args = mock_pf.call_args[0]
+        assert Path(positional_args[1]) == out.resolve()
 
     def test_main_directory_input(self, tmp_path):
         import loctran.extract as ext

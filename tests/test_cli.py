@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 from click.testing import CliRunner
@@ -126,8 +127,8 @@ class TestRunTranslate:
                 False,
                 False,
             )
-        call_args = mock_pf.call_args
-        assert str(out) in str(call_args)
+        positional_args = mock_pf.call_args[0]
+        assert Path(positional_args[1]) == out.resolve()
 
 
 class TestCliEntry:
