@@ -41,7 +41,7 @@
 
 | 3. Result | 3.1 Translation Complete |
 |---|---|
-| ![3. Result](https://raw.githubusercontent.com/anzalks/loctran/main/docs/screenshots/04_result.png) | ![3.1 Translation Complete](https://raw.githubusercontent.com/anzalks/loctran/main/docs/screenshots/translation_complete.png) |
+| ![3. Result](https://raw.githubusercontent.com/anzalks/loctran/main/docs/screenshots/result.png) | ![3.1 Translation Complete](https://raw.githubusercontent.com/anzalks/loctran/main/docs/screenshots/translation_complete.png) |
 
 ---
 
@@ -82,16 +82,19 @@ Each page becomes an image with absolutely-positioned translation boxes sized to
 ## Requirements
 
 - **OS**: macOS, Linux, or Windows
-- **Python** ≥ 3.9
+- **Python** ≥ 3.10
 - **Ollama** running locally — [download](https://ollama.com/download)
-- **Tesseract** — `brew install tesseract tesseract-lang` (macOS) or `apt install tesseract-ocr tesseract-ocr-all` (Linux)
+- **Tesseract**
+  - macOS: `brew install tesseract tesseract-lang`
+  - Linux: `apt install tesseract-ocr tesseract-ocr-all`
+  - Windows: download the installer from [UB Mannheim](https://github.com/UB-Mannheim/tesseract/wiki) or `choco install tesseract`
 
 On startup, Loctran will try to start Ollama if it is installed and will pull the configured OCR and translation models when they are missing. The first launch still depends on the user having Ollama available and network access for any model downloads.
 
 Run `loctran doctor` to check everything at once:
 
 ```
-loctran-doctor v0.1.5
+loctran-doctor
 ─────────────────────────────────────
 ✓  Python         3.11.9
 ✓  Tesseract      5.3.4  (langs: eng fra deu jpn +47)
@@ -142,6 +145,8 @@ loctran translate book.pdf --lang German --batch-size 3
 loctran doctor
 ```
 
+---
+
 ## FAQ
 
 **Does this send my documents anywhere?**
@@ -174,7 +179,7 @@ The container runs with `--no-desktop --no-browser` automatically. Mount a volum
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, running tests, and submitting PRs.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, running tests, and submitting PRs. Check the [CHANGELOG](CHANGELOG.md) for release history.
 
 ---
 
