@@ -13,7 +13,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import Dict, Optional, Set
+from typing import Any, Dict, Optional, Set
 
 import uvicorn
 from fastapi import (
@@ -1111,6 +1111,85 @@ def get_pull_status(model_name: str):
     if model_name in _model_pull_status:
         return _model_pull_status[model_name]
     return {"status": "unknown", "model": model_name}
+
+
+# --- First-Run Setup ---
+
+_setup_progress: dict[str, Any] = {
+    "running": False,
+    "step": "",
+    "percent": 0,
+    "done": False,
+    "result": None,
+}
+
+
+@app.get("/api/system-check")
+def system_check():
+    """Return full dependency status for the first-run setup wizard."""
+    from loctran.setup_deps import check_all
+
+    return check_all()
+
+
+@app.post("/api/setup/install")
+async def setup_install(request: Request):
+    """Kick off dependency installation in a background thread."""
+    from loctran.setup_deps import (
+        install_all,
+        install_ollama,
+        install_tesseract,
+        pull_models,
+    )
+
+    if _setup_progress["running"]:
+        return {"error": "Setup already in progress"}
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    component = body.get("component", "all")
+
+    def _progress(msg: str, pct: int) -> None:
+        _setup_progress["step"] = msg
+        if pct >= 0:
+            _setup_progress["percent"] = pct
+
+    def _run() -> None:
+        _setup_progress["running"] = True
+        _setup_progress["done"] = False
+        _setup_progress["result"] = None
+        _setup_progress["step"] = ""
+        _setup_progress["percent"] = 0
+
+        installers = {
+            "all": install_all,
+            "tesseract": install_tesseract,
+            "ollama": install_ollama,
+            "models": pull_models,
+        }
+        fn = installers.get(component, install_all)
+        result = fn(_progress)
+
+        _setup_progress["result"] = result
+        _setup_progress["done"] = True
+        _setup_progress["running"] = False
+        _setup_progress["percent"] = 100
+
+        if result.get("success"):
+            _pull_status["status"] = "ready"
+            _pull_status["detail"] = "All models ready"
+            _pull_status.pop("missing", None)
+
+    threading.Thread(target=_run, daemon=True, name="setup-install").start()
+    return {"started": True, "component": component}
+
+
+@app.get("/api/setup/progress")
+def setup_progress_endpoint():
+    """Poll setup installation progress."""
+    return dict(_setup_progress)
 
 
 # --- Secure File Serving ---

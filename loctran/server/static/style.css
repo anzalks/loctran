@@ -490,3 +490,196 @@ button[onclick*="landing"]:hover {
 .status-dot.pulsing {
     animation: pulse-dot 1.5s ease-in-out infinite;
 }
+
+/* --- First-Run Setup Wizard --- */
+
+.setup-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(30, 30, 60, 0.85);
+    backdrop-filter: blur(6px);
+}
+
+.setup-card {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.25);
+    padding: 2.5rem 2rem;
+    max-width: 500px;
+    width: 90%;
+    text-align: center;
+}
+
+.setup-card h2 {
+    margin: 0.5rem 0 0.25rem;
+    font-size: 1.4rem;
+    color: #1a1a2e;
+}
+
+.setup-subtitle {
+    color: #718096;
+    font-size: 0.9rem;
+    margin: 0 0 1.5rem;
+}
+
+.setup-checklist {
+    text-align: left;
+    margin: 0 0 1.5rem;
+}
+
+.setup-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.7rem 0.75rem;
+    border-radius: 8px;
+    background: #f7fafc;
+    margin-bottom: 0.5rem;
+}
+
+.setup-icon {
+    font-size: 1.2rem;
+    flex-shrink: 0;
+    width: 1.5rem;
+    text-align: center;
+}
+
+.setup-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.setup-info strong {
+    display: block;
+    font-size: 0.92rem;
+    color: #2d3748;
+}
+
+.setup-detail {
+    font-size: 0.78rem;
+    color: #a0aec0;
+    word-break: break-word;
+}
+
+.setup-action-btn {
+    padding: 0.3rem 0.8rem;
+    border: 1px solid #667eea;
+    background: transparent;
+    color: #667eea;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.setup-action-btn:hover {
+    background: #667eea;
+    color: #fff;
+}
+
+.setup-action-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.setup-progress-area {
+    margin: 1rem 0;
+}
+
+.setup-progress-bar {
+    height: 6px;
+    background: #e2e8f0;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.setup-progress-fill {
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, #667eea, #764ba2);
+    border-radius: 3px;
+    transition: width 0.4s ease;
+}
+
+.setup-progress-text {
+    font-size: 0.8rem;
+    color: #718096;
+    margin: 0.5rem 0 0;
+    min-height: 1.2em;
+}
+
+.setup-manual {
+    background: #fffbeb;
+    border: 1px solid #f6e05e;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin: 1rem 0;
+    text-align: left;
+}
+
+.setup-manual p {
+    margin: 0 0 0.5rem;
+    font-size: 0.85rem;
+    color: #744210;
+}
+
+.setup-manual code {
+    display: block;
+    background: #1a1a2e;
+    color: #e2e8f0;
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    margin-bottom: 0.5rem;
+    word-break: break-all;
+}
+
+.setup-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 1.25rem;
+}
+
+.setup-install-all {
+    padding: 0.7rem 1.5rem;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: 0.02em;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.setup-install-all:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.setup-install-all:disabled {
+    opacity: 0.6;
+    cursor: default;
+    transform: none;
+    box-shadow: none;
+}
+
+.setup-skip {
+    background: none;
+    border: none;
+    color: #a0aec0;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.setup-skip:hover {
+    color: #718096;
+    text-decoration: underline;
+}

@@ -13,6 +13,64 @@
 
 <body>
 
+    <!-- First-Run Setup Wizard -->
+    <div id="setup-wizard" class="setup-overlay" style="display:none;">
+        <div class="setup-card">
+            <img src="logo.png" alt="Loctran" style="height:64px;margin-bottom:0.5rem;">
+            <h2>First-Run Setup</h2>
+            <p class="setup-subtitle">Loctran needs a few things to work. One click installs everything.</p>
+
+            <div class="setup-checklist" id="setup-checklist">
+                <div class="setup-item" id="si-tesseract">
+                    <span class="setup-icon" data-comp="tesseract">&#9898;</span>
+                    <div class="setup-info">
+                        <strong>Tesseract OCR</strong>
+                        <span class="setup-detail" id="sd-tesseract">Checking...</span>
+                    </div>
+                    <button class="setup-action-btn" data-comp="tesseract"
+                        onclick="setupInstall('tesseract',this)">Install</button>
+                </div>
+                <div class="setup-item" id="si-ollama">
+                    <span class="setup-icon" data-comp="ollama">&#9898;</span>
+                    <div class="setup-info">
+                        <strong>Ollama</strong>
+                        <span class="setup-detail" id="sd-ollama">Checking...</span>
+                    </div>
+                    <button class="setup-action-btn" data-comp="ollama"
+                        onclick="setupInstall('ollama',this)">Install</button>
+                </div>
+                <div class="setup-item" id="si-models">
+                    <span class="setup-icon" data-comp="models">&#9898;</span>
+                    <div class="setup-info">
+                        <strong>AI Models</strong>
+                        <span class="setup-detail" id="sd-models">Checking...</span>
+                    </div>
+                    <button class="setup-action-btn" data-comp="models"
+                        onclick="setupInstall('models',this)">Pull</button>
+                </div>
+            </div>
+
+            <div class="setup-progress-area" id="setup-progress-area" style="display:none;">
+                <div class="setup-progress-bar">
+                    <div class="setup-progress-fill" id="setup-progress-fill"></div>
+                </div>
+                <p class="setup-progress-text" id="setup-progress-text"></p>
+            </div>
+
+            <div class="setup-manual" id="setup-manual" style="display:none;">
+                <p>Some installs need your terminal. Run:</p>
+                <code id="setup-manual-cmd"></code>
+                <button class="setup-action-btn" onclick="setupRecheck()">Re-check</button>
+            </div>
+
+            <div class="setup-buttons">
+                <button class="setup-install-all" id="setup-install-all-btn"
+                    onclick="setupInstall('all',this)">Install All</button>
+                <button class="setup-skip" onclick="setupSkip()">Skip for now</button>
+            </div>
+        </div>
+    </div>
+
     <div class="app-container">
         <!-- Landing Page (New) -->
         <div id="landing-page">
@@ -895,6 +953,138 @@
                 if (jobId) fetch(`/open_output_folder/${jobId}`, { method: 'POST' });
             };
         }
+    </script>
+
+    <script>
+        // --- First-Run Setup Wizard ---
+        let _setupInterval = null;
+
+        async function setupCheck() {
+            try {
+                const res = await fetch('/api/system-check');
+                const data = await res.json();
+                if (data.all_ok) {
+                    document.getElementById('setup-wizard').style.display = 'none';
+                    return;
+                }
+                _renderSetupStatus(data);
+                document.getElementById('setup-wizard').style.display = 'flex';
+            } catch (e) {
+                console.warn('[setup] check failed:', e);
+            }
+        }
+
+        function _renderSetupStatus(data) {
+            _setItem('tesseract',
+                data.tesseract.installed,
+                data.tesseract.detail);
+            _setItem('ollama',
+                data.ollama.running,
+                data.ollama.detail);
+
+            const modelNames = Object.keys(data.models || {});
+            const allPulled = modelNames.every(m => data.models[m].pulled);
+            const modelDetail = modelNames
+                .map(m => m + ': ' + (data.models[m].pulled ? 'ready' : 'missing'))
+                .join(', ');
+            _setItem('models', allPulled, modelDetail || 'Ollama not running');
+        }
+
+        function _setItem(comp, ok, detail) {
+            const icon = document.querySelector(`.setup-icon[data-comp="${comp}"]`);
+            const det = document.getElementById('sd-' + comp);
+            const btn = document.querySelector(`.setup-action-btn[data-comp="${comp}"]`);
+            if (icon) icon.innerHTML = ok ? '&#9989;' : '&#10060;';
+            if (det) det.textContent = detail || '';
+            if (btn) {
+                btn.style.display = ok ? 'none' : '';
+                btn.disabled = false;
+                btn.textContent = comp === 'models' ? 'Pull' : 'Install';
+            }
+        }
+
+        async function setupInstall(component, btn) {
+            if (btn) { btn.disabled = true; btn.textContent = 'Working...'; }
+            const allBtn = document.getElementById('setup-install-all-btn');
+            if (component === 'all' && allBtn) {
+                allBtn.disabled = true; allBtn.textContent = 'Installing...';
+            }
+            document.getElementById('setup-progress-area').style.display = 'block';
+            document.getElementById('setup-manual').style.display = 'none';
+
+            try {
+                await fetch('/api/setup/install', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({component})
+                });
+            } catch (e) {
+                console.warn('[setup] install request failed:', e);
+                return;
+            }
+
+            _setupInterval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/setup/progress');
+                    const p = await res.json();
+                    const fill = document.getElementById('setup-progress-fill');
+                    const txt = document.getElementById('setup-progress-text');
+                    if (fill) fill.style.width = p.percent + '%';
+                    if (txt) txt.textContent = p.step || '';
+
+                    if (p.done) {
+                        clearInterval(_setupInterval);
+                        _setupInterval = null;
+
+                        const result = p.result || {};
+                        // Check for manual_cmd fallback
+                        const manualCmd = _findManualCmd(result);
+                        if (manualCmd) {
+                            document.getElementById('setup-manual').style.display = 'block';
+                            document.getElementById('setup-manual-cmd').textContent = manualCmd;
+                        }
+
+                        // Refresh status
+                        await setupCheck();
+                        if (allBtn) { allBtn.disabled = false; allBtn.textContent = 'Install All'; }
+
+                        // If all ok now, auto-dismiss after 2s
+                        const recheck = await fetch('/api/system-check');
+                        const recheckData = await recheck.json();
+                        if (recheckData.all_ok) {
+                            document.getElementById('setup-progress-text').textContent = 'All set!';
+                            setTimeout(() => {
+                                document.getElementById('setup-wizard').style.display = 'none';
+                            }, 1500);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[setup] progress poll failed:', e);
+                }
+            }, 1000);
+        }
+
+        function _findManualCmd(result) {
+            if (result.manual_cmd) return result.manual_cmd;
+            if (result.results) {
+                for (const v of Object.values(result.results)) {
+                    if (v && v.manual_cmd) return v.manual_cmd;
+                }
+            }
+            return null;
+        }
+
+        async function setupRecheck() {
+            document.getElementById('setup-manual').style.display = 'none';
+            await setupCheck();
+        }
+
+        function setupSkip() {
+            document.getElementById('setup-wizard').style.display = 'none';
+        }
+
+        // Run setup check on page load
+        setupCheck();
     </script>
 
 </body>
