@@ -38,7 +38,16 @@ jobs:
         run: mypy loctran/ --ignore-missing-imports
 
       - name: Run tests with coverage
-        run: pytest --cov=loctran --cov-fail-under=70 -q
+        run: pytest --cov=loctran --cov-report=xml --cov-fail-under=75 -q
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Build and validate distribution
         run: |
