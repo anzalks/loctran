@@ -74,7 +74,7 @@ def update_docs(repo_root: Path, old_version: str, new_version: str) -> list[Pat
 
 
 def preflight_checks(repo_root: Path, branch: str) -> None:
-    """Abort early if the tree is dirty or we're on the wrong branch."""
+    """Abort early if the tree is dirty, on the wrong branch, or tests fail."""
     status = run(["git", "status", "--porcelain"], cwd=repo_root, capture=True)
     if status:
         raise RuntimeError(
@@ -89,6 +89,27 @@ def preflight_checks(repo_root: Path, branch: str) -> None:
             f"Currently on branch '{current_branch}', expected '{branch}'. "
             f"Switch branches or pass --branch {current_branch}."
         )
+
+    print("\n=== Running pre-release checks ===\n")
+
+    print("--- Lint ---")
+    run(["ruff", "check", "loctran/"], cwd=repo_root)
+    run(["ruff", "format", "--check", "loctran/"], cwd=repo_root)
+
+    print("\n--- Type check ---")
+    run(["mypy", "loctran/", "--ignore-missing-imports"], cwd=repo_root)
+
+    print("\n--- Tests ---")
+    run(
+        ["pytest", "--cov=loctran", "--cov-fail-under=75", "-q"],
+        cwd=repo_root,
+    )
+
+    print("\n--- Build validation ---")
+    run(["python", "-m", "build"], cwd=repo_root)
+    run(["twine", "check", "dist/*"], cwd=repo_root)
+
+    print("\n=== All pre-release checks passed ===\n")
 
 
 def parse_args() -> argparse.Namespace:
