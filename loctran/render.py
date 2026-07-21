@@ -91,7 +91,9 @@ def get_overlay_html(
 
     untranslated = 0
     for s in segments:
-        bbox = s["bbox"]
+        bbox = s.get("bbox")
+        if not bbox:
+            continue
         translation = (s.get("translation") or "").strip()
         original_text = (s.get("text") or "").strip()
         is_translated = bool(translation)

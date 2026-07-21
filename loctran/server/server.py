@@ -50,6 +50,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("loctran")
 
+
+def reconfigure_logging() -> None:
+    """Re-read LOCTRAN_DEBUG env var and update log level accordingly."""
+    global DEBUG_MODE
+    DEBUG_MODE = os.getenv("LOCTRAN_DEBUG", "") == "1" or SETTINGS.debug
+    level = logging.DEBUG if DEBUG_MODE else logging.INFO
+    logging.getLogger().setLevel(level)
+    logger.setLevel(level)
+
+
 # F4.13: Runtime dirs in ~/.loctran/ (not repo root / site-packages)
 BASE_DIR = Path(__file__).parent.parent.parent
 LOCTRAN_HOME = Path.home() / ".loctran"
@@ -315,6 +325,7 @@ def run_conversion(
                 if job_id in jobs:
                     jobs[job_id]["message"] = msg
                     jobs[job_id]["progress"] = percent
+                    upsert_job(jobs[job_id])
 
             jobs[job_id]["status"] = JobStatus.COMPRESSING
             update_progress("Starting conversion...", 10)
@@ -839,6 +850,12 @@ def start_process(
     # --- File validation ---
     if not Path(saved_path).exists():
         raise HTTPException(400, "Source file not found")
+    resolved = Path(saved_path).resolve()
+    if not resolved.is_relative_to(UPLOAD_DIR.resolve()):
+        logger.warning(
+            "saved_path %s is outside UPLOAD_DIR; allowing for local use",
+            saved_path,
+        )
 
     # Vision model validation
     vision_name_lower = vision_model.lower()
@@ -929,6 +946,11 @@ def start_conversion(
     # Validation
     if not Path(saved_path).exists():
         raise HTTPException(400, "Source file not found")
+    if not Path(saved_path).resolve().is_relative_to(UPLOAD_DIR.resolve()):
+        logger.warning(
+            "saved_path %s is outside UPLOAD_DIR; allowing for local use",
+            saved_path,
+        )
 
     # Determine Output Root
     if output_path and Path(output_path).exists():

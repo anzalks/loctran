@@ -69,11 +69,22 @@ def _check_model(model_name: str) -> tuple[bool, str]:
         import ollama  # type: ignore
 
         models_resp = ollama.list()
-        models = models_resp.get("models", [])
+        models = (
+            models_resp.get("models", [])
+            if isinstance(models_resp, dict)
+            else getattr(models_resp, "models", [])
+        )
         for m in models:
-            name = m.get("model", "") or m.get("name", "")
-            if name.startswith(model_name):
-                size_bytes = m.get("size", 0)
+            if isinstance(m, dict):
+                name = m.get("model", "") or m.get("name", "")
+            else:
+                name = getattr(m, "model", "") or getattr(m, "name", "")
+            norm = name.split(":")[0]
+            target = model_name.split(":")[0]
+            if norm == target or name == model_name:
+                size_bytes = (
+                    m.get("size", 0) if isinstance(m, dict) else getattr(m, "size", 0)
+                )
                 size_gb = size_bytes / (1024**3)
                 return True, f"pulled ({size_gb:.1f} GB)"
         return False, f"Model is not pulled. Run: ollama pull {model_name}"

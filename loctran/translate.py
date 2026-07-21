@@ -144,7 +144,15 @@ def check_ollama_connection(model_name: str) -> bool:
     try:
         ollama = _get_ollama()
         models_resp = ollama.list()
-        available = {_norm_model_tag(m["model"]) for m in models_resp.get("models", [])}
+        models_list = (
+            models_resp.get("models", [])
+            if isinstance(models_resp, dict)
+            else getattr(models_resp, "models", [])
+        )
+        available = {
+            _norm_model_tag(m["model"] if isinstance(m, dict) else m.model)
+            for m in models_list
+        }
         target = _norm_model_tag(model_name)
         if target not in available:
             logger.warning(
@@ -162,7 +170,13 @@ def check_ollama_connection(model_name: str) -> bool:
 def list_models() -> list[str]:
     """Return a list of available Ollama model names."""
     try:
-        return [m["model"] for m in _get_ollama().list()["models"]]
+        resp = _get_ollama().list()
+        models_list = (
+            resp.get("models", [])
+            if isinstance(resp, dict)
+            else getattr(resp, "models", [])
+        )
+        return [m["model"] if isinstance(m, dict) else m.model for m in models_list]
     except Exception:
         return [DEFAULT_MODEL]
 
@@ -416,7 +430,12 @@ def _group_segments_into_paragraphs(
     if not segments:
         return []
 
-    sorted_segs = sorted(segments, key=lambda s: (s["bbox"][1], s["bbox"][0]))
+    has_bbox = [s for s in segments if s.get("bbox")]
+    no_bbox = [s for s in segments if not s.get("bbox")]
+    if not has_bbox:
+        return [[s] for s in segments]
+
+    sorted_segs = sorted(has_bbox, key=lambda s: (s["bbox"][1], s["bbox"][0]))
     raw_heights = [s["bbox"][3] for s in sorted_segs if s["bbox"][3] > 0]
     if raw_heights:
         raw_heights.sort()
@@ -438,6 +457,8 @@ def _group_segments_into_paragraphs(
             groups[-1].append(s)
         else:
             groups.append([s])
+    for s in no_bbox:
+        groups.append([s])
     return groups
 
 
@@ -799,7 +820,7 @@ def process_folder(
                     logger.debug(
                         "Slide %d: no translatable segments, skipping.", slide_num
                     )
-                    for idx, s in enumerate(segments_to_trans):
+                    for s in segments:
                         s["translation"] = ""
                 else:
                     # F3.9: same-language detection — skip LLM if source = target

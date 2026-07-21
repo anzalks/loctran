@@ -341,11 +341,17 @@ def install_ollama(progress: ProgressCallback | None = None) -> dict[str, Any]:
         progress("Starting Ollama...", 60)
 
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             ["ollama", "serve"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        try:
+            from loctran.server import server as _srv
+
+            _srv._ollama_proc = proc
+        except Exception:
+            pass
     except FileNotFoundError:
         return {"success": False, "detail": "ollama binary not found after install"}
 

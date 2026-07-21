@@ -117,6 +117,7 @@ def serve(
     try:
         from loctran.server import server as server_mod
 
+        server_mod.reconfigure_logging()
         server_mod.install_signal_handlers()
         uv_server = server_mod.build_server(host=host, port=effective_port)
         server_thread = threading.Thread(

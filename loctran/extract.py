@@ -46,7 +46,14 @@ POSSIBLE_TESSERACT_PATHS = [
     "/usr/local/bin/tesseract",
     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
     r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-    r"C:\Users\AppData\Local\Programs\Tesseract-OCR\tesseract.exe",
+    str(
+        Path.home()
+        / "AppData"
+        / "Local"
+        / "Programs"
+        / "Tesseract-OCR"
+        / "tesseract.exe"
+    ),
 ]
 
 # F1.12: shared Ollama request timeout (seconds)
@@ -625,7 +632,7 @@ def get_segments_hybrid(
             n = len(data_dict["text"])
             for idx in range(n):
                 conf = int(data_dict["conf"][idx])
-                if conf > 0 and data_dict["text"][idx].strip():
+                if conf >= max(1, min_conf) and data_dict["text"][idx].strip():
                     # F1.5: count dropped conf<=0 at debug (conf>0 already required above)
                     all_words.append(
                         {
@@ -981,10 +988,13 @@ def process_page(
             try:
                 ai_text = ocr_with_ollama(image_path, model=vision_model)
                 if ai_text:
+                    pil_image = _get_pillow_image()
+                    _ai_img = pil_image.open(image_path)
+                    _ai_w, _ai_h = _ai_img.size
                     item["segments"] = [
                         {
                             "text": ai_text,
-                            "bbox": None,
+                            "bbox": (0, 0, _ai_w, _ai_h),
                             "min_word_height": None,
                             "method": "AI OCR (Page)",
                         }
