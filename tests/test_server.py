@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
+import os
 import time
 from contextlib import suppress
 from pathlib import Path
@@ -669,3 +671,608 @@ class TestRoleFilteredModels:
         assert resp.status_code == 200
         names = [m["name"] for m in resp.json()["models"]]
         assert len(names) == 2
+
+
+class TestCleanupStaleUploads:
+    def test_removes_old_files(self, tmp_path):
+        from loctran.server import server as srv
+
+        old = tmp_path / "old.pdf"
+        old.write_bytes(b"%PDF")
+        import os
+
+        os.utime(old, (0, 0))
+        new = tmp_path / "new.pdf"
+        new.write_bytes(b"%PDF")
+
+        with patch.object(srv, "UPLOAD_DIR", tmp_path):
+            srv._cleanup_stale_uploads(max_age_seconds=86400)
+
+        assert not old.exists()
+        assert new.exists()
+
+    def test_handles_permission_error(self, tmp_path):
+        from loctran.server import server as srv
+
+        f = tmp_path / "locked.pdf"
+        f.write_bytes(b"%PDF")
+        import os
+
+        os.utime(f, (0, 0))
+
+        with (
+            patch.object(srv, "UPLOAD_DIR", tmp_path),
+            patch("pathlib.Path.unlink", side_effect=PermissionError("denied")),
+        ):
+            srv._cleanup_stale_uploads(max_age_seconds=86400)
+
+
+class TestReportOcrFallbacks:
+    def test_counts_fallback_segments(self, tmp_path):
+        from loctran.server import server as srv
+
+        data = [
+            {
+                "segments": [
+                    {"method": "AI OCR", "ai_ocr_fallback": True},
+                    {"method": "AI OCR", "ai_ocr_fallback": False},
+                    {"method": "Tesseract"},
+                ]
+            }
+        ]
+        (tmp_path / "input_data.json").write_text(json.dumps(data))
+        job_id = "fallback-test"
+        srv.jobs[job_id] = {"id": job_id, "status": "extracting"}
+        progress_calls = []
+        try:
+            srv._report_ocr_fallbacks(
+                tmp_path, job_id, lambda m, p: progress_calls.append((m, p))
+            )
+            assert srv.jobs[job_id]["ocr_fallback_count"] == 1
+            assert len(progress_calls) == 1
+        finally:
+            srv.jobs.pop(job_id, None)
+
+    def test_handles_missing_json(self, tmp_path):
+        from loctran.server import server as srv
+
+        srv._report_ocr_fallbacks(tmp_path, "nojob", lambda m, p: None)
+
+
+class TestCancelJob:
+    def test_cancel_queued_job(self, client):
+        from loctran.server import server as srv
+
+        job_id = "cancel-me"
+        srv.jobs[job_id] = {
+            "id": job_id,
+            "status": "queued",
+            "message": "",
+            "created_at": time.time(),
+        }
+        try:
+            with patch("loctran.server.server.upsert_job"):
+                resp = client.post(f"/cancel/{job_id}")
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "cancel_requested"
+        finally:
+            srv.jobs.pop(job_id, None)
+
+    def test_cancel_completed_job_is_noop(self, client):
+        from loctran.server import server as srv
+
+        job_id = "already-done"
+        srv.jobs[job_id] = {
+            "id": job_id,
+            "status": "completed",
+            "message": "",
+            "created_at": time.time(),
+        }
+        try:
+            resp = client.post(f"/cancel/{job_id}")
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "already_terminal"
+        finally:
+            srv.jobs.pop(job_id, None)
+
+    def test_cancel_unknown_job_404(self, client):
+        resp = client.post("/cancel/nonexistent-id")
+        assert resp.status_code == 404
+
+
+class TestPipelineCancellation:
+    def test_cancel_before_extraction(self, tmp_path):
+        from loctran.server import server as srv
+
+        job_id = "cancel-pre-extract"
+        f = tmp_path / "in.pdf"
+        f.write_bytes(b"%PDF-1.4")
+        srv.jobs[job_id] = {
+            "id": job_id,
+            "status": "queued",
+            "progress": 0,
+            "message": "",
+            "result_url": None,
+            "result_path": str(tmp_path),
+            "created_at": time.time(),
+        }
+        srv._cancel_requested.add(job_id)
+        try:
+            with patch("loctran.server.server.upsert_job"):
+                srv.run_pipeline(job_id, f, "French", "qwen2.5:7b", "in.pdf", tmp_path)
+            assert srv.jobs[job_id]["status"] == "cancelled"
+        finally:
+            srv.jobs.pop(job_id, None)
+            srv._cancel_requested.discard(job_id)
+
+    def test_cancel_between_stages(self, tmp_path):
+        from loctran.server import server as srv
+
+        job_id = "cancel-mid"
+        f = tmp_path / "in.pdf"
+        f.write_bytes(b"%PDF-1.4")
+        doc_dir = tmp_path / "output"
+        doc_dir.mkdir()
+        srv.jobs[job_id] = {
+            "id": job_id,
+            "status": "queued",
+            "progress": 0,
+            "message": "",
+            "result_url": None,
+            "result_path": str(tmp_path),
+            "created_at": time.time(),
+        }
+
+        def add_cancel(*a, **kw):
+            srv._cancel_requested.add(job_id)
+            return doc_dir
+
+        try:
+            with (
+                patch("loctran.server.server.process_file", side_effect=add_cancel),
+                patch("loctran.server.server.upsert_job"),
+            ):
+                srv.run_pipeline(job_id, f, "French", "qwen2.5:7b", "in.pdf", tmp_path)
+            assert srv.jobs[job_id]["status"] == "cancelled"
+        finally:
+            srv.jobs.pop(job_id, None)
+            srv._cancel_requested.discard(job_id)
+
+
+class TestConversionCancellation:
+    def test_cancel_before_compression(self, tmp_path):
+        from loctran.server import server as srv
+
+        job_id = "cancel-conv"
+        f = tmp_path / "in.pdf"
+        f.write_bytes(b"%PDF-1.4")
+        srv.jobs[job_id] = {
+            "id": job_id,
+            "status": "queued",
+            "progress": 0,
+            "message": "",
+            "result_url": None,
+            "result_path": str(tmp_path),
+            "created_at": time.time(),
+        }
+        srv._cancel_requested.add(job_id)
+        try:
+            with patch("loctran.server.server.upsert_job"):
+                srv.run_conversion(job_id, f, "in.pdf", "1MB", tmp_path)
+            assert srv.jobs[job_id]["status"] == "cancelled"
+        finally:
+            srv.jobs.pop(job_id, None)
+            srv._cancel_requested.discard(job_id)
+
+
+class TestLifecycleHelpers:
+    def test_desktop_mode_enabled(self):
+        from loctran.server import server as srv
+
+        with patch.dict("os.environ", {"LOCTRAN_DESKTOP_MODE": "1"}):
+            assert srv._desktop_mode_enabled() is True
+        with patch.dict("os.environ", {"LOCTRAN_DESKTOP_MODE": "0"}):
+            assert srv._desktop_mode_enabled() is False
+
+    def test_has_active_jobs(self):
+        from loctran.server import server as srv
+
+        old_jobs = dict(srv.jobs)
+        srv.jobs.clear()
+        try:
+            assert srv._has_active_jobs() is False
+            srv.jobs["j1"] = {"status": "translating"}
+            assert srv._has_active_jobs() is True
+            srv.jobs["j1"]["status"] = "completed"
+            assert srv._has_active_jobs() is False
+        finally:
+            srv.jobs.clear()
+            srv.jobs.update(old_jobs)
+
+    def test_has_active_connections(self):
+        from loctran.server import server as srv
+
+        old = set(srv.active_connections)
+        srv.active_connections.clear()
+        try:
+            assert srv._has_active_connections() is False
+            srv.active_connections.add(MagicMock())
+            assert srv._has_active_connections() is True
+        finally:
+            srv.active_connections.clear()
+            srv.active_connections.update(old)
+
+    def test_request_graceful_shutdown(self):
+        from loctran.server import server as srv
+
+        srv.SHUTDOWN_EVENT.clear()
+        mock_server = MagicMock()
+        mock_server.should_exit = False
+        old_server = srv._server_instance
+        srv._server_instance = mock_server
+        try:
+            srv.request_graceful_shutdown("test")
+            assert srv.SHUTDOWN_EVENT.is_set()
+            assert mock_server.should_exit is True
+            srv.request_graceful_shutdown("duplicate call")
+        finally:
+            srv._server_instance = old_server
+            srv.SHUTDOWN_EVENT.clear()
+
+    def test_cancel_pending_shutdown_task(self):
+        from loctran.server import server as srv
+
+        task = _DummyPendingTask()
+        srv._pending_shutdown_task = task
+        srv._cancel_pending_shutdown_task()
+        assert task.cancel_called
+        assert srv._pending_shutdown_task is None
+
+    def test_cleanup_old_jobs_handles_exception(self):
+        from loctran.server import server as srv
+
+        with patch(
+            "loctran.server.server._store_cleanup", side_effect=RuntimeError("db fail")
+        ):
+            srv.cleanup_old_jobs()
+
+
+class TestOllamaStatusEndpoint:
+    def test_returns_pull_status(self, client):
+        from loctran.server import server as srv
+
+        old = dict(srv._pull_status)
+        srv._pull_status.clear()
+        srv._pull_status.update({"status": "ready", "detail": "All models ready"})
+        try:
+            resp = client.get("/api/ollama-status")
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "ready"
+        finally:
+            srv._pull_status.clear()
+            srv._pull_status.update(old)
+
+
+class TestPullModelEndpoint:
+    def test_pull_model_starts_thread(self, client):
+        resp = client.post("/api/pull-model", json={"model": "qwen2.5:7b"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "pulling"
+
+    def test_pull_model_missing_field(self, client):
+        resp = client.post("/api/pull-model", json={})
+        assert resp.status_code == 400
+
+    def test_pull_model_invalid_name(self, client):
+        resp = client.post("/api/pull-model", json={"model": "bad model!!"})
+        assert resp.status_code == 400
+
+    def test_pull_model_invalid_json(self, client):
+        resp = client.post(
+            "/api/pull-model",
+            content=b"not json",
+            headers={"content-type": "application/json"},
+        )
+        assert resp.status_code == 400
+
+    def test_pull_model_already_pulling(self, client):
+        from loctran.server import server as srv
+
+        old = dict(srv._model_pull_status)
+        srv._model_pull_status["test-model:latest"] = {
+            "status": "pulling",
+            "model": "test-model:latest",
+        }
+        try:
+            resp = client.post("/api/pull-model", json={"model": "test-model:latest"})
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "pulling"
+        finally:
+            srv._model_pull_status.clear()
+            srv._model_pull_status.update(old)
+
+
+class TestPullStatusEndpoint:
+    def test_returns_status_for_known_model(self, client):
+        from loctran.server import server as srv
+
+        old = dict(srv._model_pull_status)
+        srv._model_pull_status["test:latest"] = {
+            "status": "done",
+            "model": "test:latest",
+        }
+        try:
+            resp = client.get("/api/pull-status/test:latest")
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "done"
+        finally:
+            srv._model_pull_status.clear()
+            srv._model_pull_status.update(old)
+
+    def test_returns_unknown_for_missing_model(self, client):
+        resp = client.get("/api/pull-status/nonexistent:latest")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "unknown"
+
+
+class TestSetupEndpoints:
+    def test_system_check(self, client):
+        mock_result = {"all_ok": True, "tesseract": {"installed": True}}
+        with patch("loctran.setup_deps.check_all", return_value=mock_result):
+            resp = client.get("/api/system-check")
+        assert resp.status_code == 200
+        assert resp.json()["all_ok"] is True
+
+    def test_setup_progress(self, client):
+        resp = client.get("/api/setup/progress")
+        assert resp.status_code == 200
+        assert "running" in resp.json()
+
+    def test_setup_install_starts(self, client):
+        from loctran.server import server as srv
+
+        old = dict(srv._setup_progress)
+        srv._setup_progress["running"] = False
+        try:
+            with patch(
+                "loctran.setup_deps.install_all", return_value={"success": True}
+            ):
+                resp = client.post("/api/setup/install", json={"component": "all"})
+            assert resp.status_code == 200
+            assert resp.json()["started"] is True
+        finally:
+            import time as _time
+
+            _time.sleep(0.1)
+            srv._setup_progress.clear()
+            srv._setup_progress.update(old)
+
+    def test_setup_install_already_running(self, client):
+        from loctran.server import server as srv
+
+        old = dict(srv._setup_progress)
+        srv._setup_progress["running"] = True
+        try:
+            resp = client.post("/api/setup/install", json={"component": "all"})
+            assert resp.status_code == 200
+            assert resp.json()["error"] == "Setup already in progress"
+        finally:
+            srv._setup_progress.clear()
+            srv._setup_progress.update(old)
+
+    def test_setup_install_no_json_body(self, client):
+        from loctran.server import server as srv
+
+        old = dict(srv._setup_progress)
+        srv._setup_progress["running"] = False
+        try:
+            with patch(
+                "loctran.setup_deps.install_all", return_value={"success": True}
+            ):
+                resp = client.post("/api/setup/install")
+            assert resp.status_code == 200
+        finally:
+            import time as _time
+
+            _time.sleep(0.1)
+            srv._setup_progress.clear()
+            srv._setup_progress.update(old)
+
+
+class TestViewResultSingleFile:
+    def test_serves_matching_file(self, client, tmp_path):
+        from loctran.server import server as srv
+
+        result_file = tmp_path / "result.pdf"
+        result_file.write_bytes(b"%PDF")
+        job_id = "single-view"
+        srv.jobs[job_id] = {
+            "id": job_id,
+            "status": "completed",
+            "result_path": str(result_file),
+            "created_at": time.time(),
+        }
+        try:
+            resp = client.get(f"/view_file/{job_id}/result.pdf")
+            assert resp.status_code == 200
+        finally:
+            srv.jobs.pop(job_id, None)
+
+    def test_rejects_wrong_filename(self, client, tmp_path):
+        from loctran.server import server as srv
+
+        result_file = tmp_path / "result.pdf"
+        result_file.write_bytes(b"%PDF")
+        job_id = "single-deny"
+        srv.jobs[job_id] = {
+            "id": job_id,
+            "status": "completed",
+            "result_path": str(result_file),
+            "created_at": time.time(),
+        }
+        try:
+            resp = client.get(f"/view_file/{job_id}/wrong.pdf")
+            assert resp.status_code == 403
+        finally:
+            srv.jobs.pop(job_id, None)
+
+    def test_no_result_path_404(self, client):
+        from loctran.server import server as srv
+
+        job_id = "no-result"
+        srv.jobs[job_id] = {
+            "id": job_id,
+            "status": "completed",
+            "result_path": None,
+            "created_at": time.time(),
+        }
+        try:
+            resp = client.get(f"/view_file/{job_id}/out.html")
+            assert resp.status_code == 404
+        finally:
+            srv.jobs.pop(job_id, None)
+
+
+class TestViewResultFileMissingPath:
+    def test_no_result_path_404(self, client):
+        from loctran.server import server as srv
+
+        job_id = "no-result-view"
+        srv.jobs[job_id] = {
+            "id": job_id,
+            "status": "completed",
+            "result_path": None,
+            "created_at": time.time(),
+        }
+        try:
+            resp = client.get(f"/view/{job_id}/out.html")
+            assert resp.status_code == 404
+        finally:
+            srv.jobs.pop(job_id, None)
+
+    def test_missing_file_404(self, client, tmp_path):
+        from loctran.server import server as srv
+
+        job_id = "missing-file"
+        srv.jobs[job_id] = {
+            "id": job_id,
+            "status": "completed",
+            "result_path": str(tmp_path),
+            "created_at": time.time(),
+        }
+        try:
+            resp = client.get(f"/view/{job_id}/nonexistent.html")
+            assert resp.status_code == 404
+        finally:
+            srv.jobs.pop(job_id, None)
+
+
+class TestOpenOutputFolder:
+    def test_no_result_path_404(self, client):
+        from loctran.server import server as srv
+
+        job_id = "open-no-path"
+        srv.jobs[job_id] = {
+            "id": job_id,
+            "status": "completed",
+            "result_path": None,
+            "created_at": time.time(),
+        }
+        try:
+            resp = client.post(f"/open_output_folder/{job_id}")
+            assert resp.status_code == 404
+        finally:
+            srv.jobs.pop(job_id, None)
+
+    def test_handles_subprocess_error(self, client, tmp_path):
+        from loctran.server import server as srv
+
+        job_id = "open-fail"
+        srv.jobs[job_id] = {
+            "id": job_id,
+            "status": "completed",
+            "result_path": str(tmp_path),
+            "created_at": time.time(),
+        }
+        try:
+            with patch(
+                "loctran.server.server.subprocess.run",
+                side_effect=RuntimeError("no display"),
+            ):
+                resp = client.post(f"/open_output_folder/{job_id}")
+            assert resp.status_code == 200
+            assert "error" in resp.json()
+        finally:
+            srv.jobs.pop(job_id, None)
+
+
+class TestStartupInfo:
+    def test_returns_recommendation(self, client):
+        with (
+            patch("loctran.server.server.estimate_system_ram_gb", return_value=16.0),
+            patch(
+                "loctran.server.server.choose_startup_model",
+                return_value="qwen2.5:7b",
+            ),
+            patch("loctran.server.server.should_warn_large_model", return_value=False),
+        ):
+            resp = client.get("/api/startup-info")
+        assert resp.status_code == 200
+        assert resp.json()["recommended_model"] == "qwen2.5:7b"
+        assert resp.json()["ram_gb"] == 16.0
+
+    # check_ai_engine tests live in test_server_ai_engine.py
+    # (isolated from the module-scoped client fixture)
+
+
+class TestInstallSignalHandlers:
+    def test_installs_once(self):
+        from loctran.server import server as srv
+
+        old = srv._signal_handlers_installed
+        srv._signal_handlers_installed = False
+        try:
+            with patch("loctran.server.server.signal.signal") as mock_signal:
+                srv.install_signal_handlers()
+            assert mock_signal.call_count == 2
+            assert srv._signal_handlers_installed is True
+            with patch("loctran.server.server.signal.signal") as mock_signal2:
+                srv.install_signal_handlers()
+            mock_signal2.assert_not_called()
+        finally:
+            srv._signal_handlers_installed = old
+
+
+class TestStartOllamaEdgeCases:
+    def test_ollama_host_set_skips_local(self):
+        from loctran.server import server as srv
+
+        with (
+            patch(
+                "loctran.server.server.check_ollama_connection",
+                side_effect=Exception("no"),
+            ),
+            patch.dict("os.environ", {"OLLAMA_HOST": "http://remote:11434"}),
+        ):
+            srv._start_ollama_if_needed()
+
+    def test_ollama_binary_not_found(self):
+        from loctran.server import server as srv
+
+        with (
+            patch(
+                "loctran.server.server.check_ollama_connection",
+                side_effect=Exception("no"),
+            ),
+            patch.dict("os.environ", {}, clear=False),
+            patch(
+                "loctran.server.server.subprocess.Popen",
+                side_effect=FileNotFoundError("no ollama"),
+            ),
+        ):
+            old_host = os.environ.pop("OLLAMA_HOST", None)
+            try:
+                srv._start_ollama_if_needed()
+            finally:
+                if old_host is not None:
+                    os.environ["OLLAMA_HOST"] = old_host

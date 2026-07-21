@@ -776,7 +776,6 @@ class TestModelPolicyCoverage:
         from loctran.model_policy import _get_ollama
 
         with patch.dict("sys.modules", {"ollama": None}):
-            import importlib
 
             try:
                 _get_ollama()
@@ -1058,3 +1057,209 @@ class TestGroupSegmentsCoverage:
         ]
         groups = _group_segments_into_paragraphs(segs)
         assert len(groups) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Tests: _get_ollama / _get_translate_client
+# ---------------------------------------------------------------------------
+
+
+class TestGetOllama:
+    def test_raises_dependency_error_when_missing(self):
+        from loctran.exceptions import DependencyError
+
+        with patch.dict("sys.modules", {"ollama": None}):
+            from loctran.translate import _get_ollama
+
+            with pytest.raises(DependencyError, match="ollama"):
+                _get_ollama()
+
+    def test_returns_module_when_present(self):
+        from loctran.translate import _get_ollama
+
+        mock_ollama = MagicMock()
+        with patch.dict("sys.modules", {"ollama": mock_ollama}):
+            result = _get_ollama()
+        assert result is mock_ollama
+
+
+class TestGetTranslateClient:
+    def test_returns_client_with_timeout(self):
+        from loctran.translate import _get_translate_client
+
+        mock_ollama = MagicMock()
+        mock_client = MagicMock()
+        mock_ollama.Client.return_value = mock_client
+        with patch("loctran.translate._get_ollama", return_value=mock_ollama):
+            result = _get_translate_client()
+        assert result is mock_client
+        mock_ollama.Client.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tests: translate main() CLI entry point
+# ---------------------------------------------------------------------------
+
+
+class TestTranslateMain:
+    def test_main_with_input_data_json(self, tmp_path):
+        from loctran.translate import main
+
+        (tmp_path / "input_data.json").write_text("[]")
+        mock_ollama = MagicMock()
+        with (
+            patch("sys.argv", ["translate", str(tmp_path)]),
+            patch("loctran.translate._get_ollama", return_value=mock_ollama),
+            patch("loctran.translate.process_folder") as mock_pf,
+        ):
+            main()
+        mock_pf.assert_called_once()
+
+    def test_main_iterates_subdirs(self, tmp_path):
+        from loctran.translate import main
+
+        sub1 = tmp_path / "doc1"
+        sub1.mkdir()
+        sub2 = tmp_path / "doc2"
+        sub2.mkdir()
+        (tmp_path / "somefile.txt").write_text("ignored")
+
+        mock_ollama = MagicMock()
+        with (
+            patch("sys.argv", ["translate", str(tmp_path)]),
+            patch("loctran.translate._get_ollama", return_value=mock_ollama),
+            patch("loctran.translate.process_folder") as mock_pf,
+        ):
+            main()
+        assert mock_pf.call_count == 2
+
+    def test_main_ollama_not_connected(self, tmp_path, capsys):
+        from loctran.translate import main
+
+        mock_ollama = MagicMock()
+        mock_ollama.list.side_effect = RuntimeError("down")
+        with (
+            patch("sys.argv", ["translate", str(tmp_path)]),
+            patch("loctran.translate._get_ollama", return_value=mock_ollama),
+        ):
+            main()
+        captured = capsys.readouterr()
+        assert "not connected" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Tests: process_folder image slide path
+# ---------------------------------------------------------------------------
+
+
+class TestProcessFolderImageSlide:
+    def _write_input_data(self, folder, slides):
+        (folder / "input_data.json").write_text(json.dumps(slides))
+
+    def test_image_slide_translated(self, tmp_path):
+        from PIL import Image
+
+        from loctran.translate import process_folder
+
+        img_dir = tmp_path / "images"
+        img_dir.mkdir()
+        img = img_dir / "page_1.png"
+        Image.new("RGB", (200, 100), "white").save(img)
+
+        slides = [
+            {
+                "slide_num": 1,
+                "image_path": str(img),
+                "segments": [
+                    {"text": "Hello world", "bbox": [10, 10, 100, 20]},
+                ],
+            }
+        ]
+        self._write_input_data(tmp_path, slides)
+
+        mock_client = MagicMock()
+        mock_client.chat.return_value = {
+            "message": {"content": '[{"id":0,"translation":"Bonjour monde"}]'}
+        }
+        with (
+            patch("loctran.translate.check_ollama_connection", return_value=True),
+            patch("loctran.translate._get_translate_client", return_value=mock_client),
+            patch("loctran.translate.time.sleep"),
+        ):
+            process_folder(tmp_path, "French", "qwen2.5:7b")
+        html = (tmp_path / f"{tmp_path.name}.html").read_text()
+        assert "overlay-container" in html
+
+    def test_image_slide_no_translatable_segments(self, tmp_path):
+        from PIL import Image
+
+        from loctran.translate import process_folder
+
+        img_dir = tmp_path / "images"
+        img_dir.mkdir()
+        img = img_dir / "page_1.png"
+        Image.new("RGB", (200, 100), "white").save(img)
+
+        slides = [
+            {
+                "slide_num": 1,
+                "image_path": str(img),
+                "segments": [
+                    {"text": "...", "bbox": [10, 10, 100, 20]},
+                ],
+            }
+        ]
+        self._write_input_data(tmp_path, slides)
+
+        with (
+            patch("loctran.translate.check_ollama_connection", return_value=True),
+            patch("loctran.translate.time.sleep"),
+        ):
+            process_folder(tmp_path, "French", "qwen2.5:7b")
+        html = (tmp_path / f"{tmp_path.name}.html").read_text()
+        assert "overlay-container" in html
+
+    def test_progress_callback_called(self, tmp_path):
+        from PIL import Image
+
+        from loctran.translate import process_folder
+
+        img_dir = tmp_path / "images"
+        img_dir.mkdir()
+        img = img_dir / "page_1.png"
+        Image.new("RGB", (200, 100), "white").save(img)
+
+        slides = [
+            {
+                "slide_num": 1,
+                "image_path": str(img),
+                "segments": [
+                    {"text": "Hello", "bbox": [10, 10, 100, 20]},
+                ],
+            }
+        ]
+        self._write_input_data(tmp_path, slides)
+
+        calls = []
+        mock_client = MagicMock()
+        mock_client.chat.return_value = {
+            "message": {"content": '[{"id":0,"translation":"Hola"}]'}
+        }
+        with (
+            patch("loctran.translate.check_ollama_connection", return_value=True),
+            patch("loctran.translate._get_translate_client", return_value=mock_client),
+            patch("loctran.translate.time.sleep"),
+        ):
+            process_folder(
+                tmp_path,
+                "French",
+                "qwen2.5:7b",
+                progress_callback=lambda m, p: calls.append((m, p)),
+            )
+        assert len(calls) >= 1
+
+    def test_norm_model_tag(self):
+        from loctran.translate import _norm_model_tag
+
+        assert _norm_model_tag("glm-ocr") == "glm-ocr:latest"
+        assert _norm_model_tag("qwen2.5:7b") == "qwen2.5:7b"
