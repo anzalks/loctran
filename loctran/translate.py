@@ -600,6 +600,9 @@ def translate_segments(
         text = s.get("text", "").strip()
         if not text:
             continue
+        if not _has_alphanumeric(text):
+            results[i] = text
+            continue
         key: tuple = (text, target_lang, model)
         if key in _memo:
             results[i] = _memo[key]  # F3.4: memo hit

@@ -1,5 +1,9 @@
 from unittest.mock import patch, MagicMock
-from loctran.translate import _is_valid_translation, _translate_chunk
+from loctran.translate import (
+    _is_valid_translation,
+    _translate_chunk,
+    translate_segments,
+)
 
 
 def test_is_valid_translation():
@@ -116,3 +120,28 @@ def test_positional_fallback_safe(mock_client, mock_single):
     assert results[2] == "Deux Repair"
     assert results[3] == "Trois Repair"
     assert results[4] == "Quatre Repair"
+
+
+@patch("loctran.translate._translate_chunk")
+def test_skip_decorations(mock_chunk):
+    mock_chunk.return_value = {1: "Bonjour"}
+
+    segments = [
+        {"text": "———"},  # Decoration, should be skipped
+        {"text": "Hello"},  # Should be sent
+        {"text": "   "},  # Empty after strip, should be skipped
+    ]
+
+    results = translate_segments(segments, "dummy", "fr")
+
+    # Assert chunking only received "Hello"
+    assert mock_chunk.call_count == 1
+    chunk_arg = mock_chunk.call_args[0][0]
+    assert len(chunk_arg) == 1
+    assert chunk_arg[0]["id"] == 1
+    assert chunk_arg[0]["text"] == "Hello"
+
+    # Assert final results include the decoration untouched
+    assert results[0] == "———"
+    assert results[1] == "Bonjour"
+    # Empty string is just skipped, no result mapped (or it just continues)
