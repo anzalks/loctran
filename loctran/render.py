@@ -137,6 +137,12 @@ def get_overlay_html(
 
         if s.get("font_px") is not None and width > 0:
             font_cqw = (s["font_px"] / width) * 100
+            # Cap the vertical box height to 1.5x the exact font height
+            expected_h_p = (s["font_px"] * 1.5 / height) * 100
+            if height_p > expected_h_p:
+                diff = height_p - expected_h_p
+                top_p += diff / 2
+                height_p = expected_h_p
         else:
             if is_translated:
                 font_cqw = height_cand
