@@ -489,7 +489,7 @@ def process_individual_segment(
 
 
 def merge_words(
-    word_list: "list[dict[str, Any]]", sx: float, sy: float
+    word_list: "list[dict[str, Any]]", sx: float, sy: float, img_h: float
 ) -> "dict[str, Any]":
     tops = sorted([w["top"] for w in word_list])
     heights = sorted([w["height"] for w in word_list])
@@ -516,6 +516,7 @@ def merge_words(
     ]
     cw.sort()
     med_char_w = (cw[len(cw) // 2] * sx) if cw else None
+
     seg: dict[str, Any] = {
         "text": text,
         "bbox": [x0 * sx, final_top * sy, (x1 - x0) * sx, final_h * sy],
@@ -524,6 +525,16 @@ def merge_words(
     }
     if med_char_w is not None:
         seg["char_width"] = med_char_w
+
+    font_px_cands = [
+        w["size"] * sy for w in word_list if w.get("size") is not None and w["size"] > 0
+    ]
+    if font_px_cands:
+        font_px_cands.sort()
+        med_font_px = font_px_cands[len(font_px_cands) // 2]
+        if 4.0 <= med_font_px <= 0.5 * img_h:
+            seg["font_px"] = med_font_px
+
     return seg
 
 
@@ -873,7 +884,7 @@ def process_page(
                         scale_x = img_w / pdf_w
                         scale_y = img_h / pdf_h
 
-                        words = page.extract_words()
+                        words = page.extract_words(extra_attrs=["size", "fontname"])
                         segments: list[dict[str, Any]] = []
                         words.sort(key=lambda w: (w["top"], w["x0"]))
 
@@ -921,13 +932,15 @@ def process_page(
                                 gap = line[idx]["x0"] - line[idx - 1]["x1"]
                                 if gap > gap_threshold:
                                     segments.append(
-                                        merge_words(current_chunk, scale_x, scale_y)
+                                        merge_words(
+                                            current_chunk, scale_x, scale_y, img_h
+                                        )
                                     )
                                     current_chunk = []
                                 current_chunk.append(line[idx])
                             if current_chunk:
                                 segments.append(
-                                    merge_words(current_chunk, scale_x, scale_y)
+                                    merge_words(current_chunk, scale_x, scale_y, img_h)
                                 )
 
                         # F1.7: check coverage; supplement with OCR when sparse

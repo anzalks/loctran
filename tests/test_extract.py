@@ -422,7 +422,7 @@ class TestMergeWords:
         import loctran.extract as ext
 
         words = [self._word("Hello", 10, 50, 5, 20, 15)]
-        result = ext.merge_words(words, 1.0, 1.0)
+        result = ext.merge_words(words, 1.0, 1.0, 1000.0)
         assert result["text"] == "Hello"
         assert "bbox" in result
 
@@ -433,14 +433,14 @@ class TestMergeWords:
             self._word("Hello", 0, 40, 5, 18, 13),
             self._word("world", 50, 90, 5, 18, 13),
         ]
-        result = ext.merge_words(words, 1.0, 1.0)
+        result = ext.merge_words(words, 1.0, 1.0, 1000.0)
         assert result["text"] == "Hello world"
 
     def test_applies_scale(self):
         import loctran.extract as ext
 
         words = [self._word("A", 10, 20, 5, 15, 10)]
-        result = ext.merge_words(words, 2.0, 3.0)
+        result = ext.merge_words(words, 2.0, 3.0, 1000.0)
         # x should be 10 * 2.0 = 20
         assert result["bbox"][0] == pytest.approx(10 * 2.0)
 
@@ -453,7 +453,7 @@ class TestMergeWords:
             self._word("B", 15, 25, 5, 17, 12),
             self._word("C", 30, 40, 5, 205, 200),  # outlier
         ]
-        result = ext.merge_words(words, 1.0, 1.0)
+        result = ext.merge_words(words, 1.0, 1.0, 1000.0)
         # Should not crash and height should be reduced
         assert result["bbox"][3] < 200
 
