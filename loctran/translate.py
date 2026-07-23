@@ -340,12 +340,14 @@ def _translate_chunk(
     if not chunk:
         return {}
 
+    # Strip noise from input to prevent LLM confusion
+    clean_chunk = [{"id": c["id"], "original": c["text"]} for c in chunk]
     prompt = (
         f"Translate the following text segments to {target_lang}.\n"
         "Maintain tone and meaning.\n"
         "Output ONLY a valid JSON array in the form: "
-        '[{"id": 0, "translation": "..."}]\n\n'
-        f"Input:\n{json.dumps(chunk, ensure_ascii=False)}"
+        '[{"id": 0, "original": "...", "translation": "..."}]\n\n'
+        f"Input:\n{json.dumps(clean_chunk, ensure_ascii=False)}"
     )
 
     # Attempt 1: batch JSON via client with timeout + options (F3.1, F3.3)
@@ -366,23 +368,35 @@ def _translate_chunk(
         logger.debug("Chunk raw response (first 300 chars): %s", content[:300])
         data = _extract_json_array(content)
 
-        # F3.5: ID-first mapping, position fallback, safe value extraction
+        # F3.5: ID-first mapping, original text fallback, position fallback
         id_map: dict[Any, str] = {}
+        orig_map: dict[str, str] = {}
         for item in data:
             val = _get_translation_value(item)
             if val is not None:
-                id_map[item.get("id")] = val
+                if item.get("id") is not None:
+                    # coerce LLM ID to int just in case it returned a string
+                    try:
+                        id_map[int(item["id"])] = val
+                    except (ValueError, TypeError):
+                        pass
+                if isinstance(item.get("original"), str):
+                    orig_map[item["original"].strip()] = val
 
         results: dict[int, str] = {}
         for pos, c in enumerate(chunk):
-            val = id_map.get(c["id"])
+            c_id = c["id"]
+            c_text = c["text"].strip()
+            val = id_map.get(c_id)
             if val is not None:
-                results[c["id"]] = val
+                results[c_id] = val
+            elif orig_map.get(c_text) is not None:
+                results[c_id] = orig_map[c_text]
             elif pos < len(data):
-                # positional fallback when IDs don't match
+                # positional fallback when IDs and original text don't match
                 fallback = _get_translation_value(data[pos])
                 if fallback is not None:
-                    results[c["id"]] = fallback
+                    results[c_id] = fallback
 
         logger.debug("Chunk batch mapped %d/%d", len(results), len(chunk))
         return results
