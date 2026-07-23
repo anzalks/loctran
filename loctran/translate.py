@@ -351,6 +351,25 @@ def _translate_single_with_retry(
     return None
 
 
+def _repair_missing(
+    missing: list[dict[str, Any]], target_lang: str, model: str
+) -> dict[int, str]:
+    """Fallback to single-item retry for missing items (Phase 2)."""
+    results = {}
+    for item in missing:
+        translated = _translate_single_with_retry(item["text"], target_lang, model)
+        if translated is not None:
+            results[item["id"]] = translated
+        else:
+            logger.warning(
+                "Sequential failed all retries for seg %d (text=%r)",
+                item["id"],
+                item["text"][:50],
+            )
+        time.sleep(0.2)
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Chunk translation
 # ---------------------------------------------------------------------------
@@ -427,6 +446,18 @@ def _translate_chunk(
                 if fallback is not None and _is_valid_translation(fallback, c_text):
                     results[c_id] = fallback
 
+        # Repair partial batches (Phase 2)
+        missing = [c for c in chunk if c["id"] not in results]
+        if missing:
+            logger.debug(
+                "Batch mapped %d/%d; repairing %d missing items",
+                len(results),
+                len(chunk),
+                len(missing),
+            )
+            repaired = _repair_missing(missing, target_lang, model)
+            results.update(repaired)
+
         logger.debug("Chunk batch mapped %d/%d", len(results), len(chunk))
         return results
 
@@ -440,19 +471,7 @@ def _translate_chunk(
         time.sleep(1.0)
 
     # Attempt 2: sequential per-item via shared retry helper (F3.11)
-    results = {}
-    for item in chunk:
-        translated = _translate_single_with_retry(item["text"], target_lang, model)
-        if translated is not None:
-            results[item["id"]] = translated
-        else:
-            logger.error(
-                "Sequential failed all retries for seg %d (text=%r)",
-                item["id"],
-                item["text"][:50],
-            )
-        time.sleep(0.2)
-    return results
+    return _repair_missing(chunk, target_lang, model)
 
 
 # ---------------------------------------------------------------------------

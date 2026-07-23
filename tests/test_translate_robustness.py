@@ -55,3 +55,26 @@ def test_translate_chunk_drops_invalid(mock_client):
 
     # The invalid "----" should NOT be in the results!
     assert 2 not in results
+
+
+@patch("loctran.translate._translate_single_with_retry")
+@patch("loctran.translate._get_translate_client")
+def test_repair_partial_batch(mock_client, mock_single):
+    # Setup mock client to return only 1 of 2 items
+    mock_instance = MagicMock()
+    mock_client.return_value = mock_instance
+    mock_instance.chat.return_value = {
+        "message": {"content": '[{"id": 1, "translation": "Bonjour"}]'}
+    }
+
+    # Mock the repair fallback
+    mock_single.return_value = "Monde"
+
+    chunk = [{"id": 1, "text": "Hello"}, {"id": 2, "text": "World"}]
+
+    results = _translate_chunk(chunk, "dummy", "fr")
+
+    # It should have both
+    assert results[1] == "Bonjour"
+    assert results[2] == "Monde"
+    mock_single.assert_called_once_with("World", "fr", "dummy")
