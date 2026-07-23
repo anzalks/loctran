@@ -30,7 +30,7 @@ pytest -q
 For coverage:
 
 ```bash
-pytest --cov=loctran --cov-fail-under=75 -q
+pytest --cov=loctran --cov-fail-under=85 -q
 ```
 
 ## Code style

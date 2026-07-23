@@ -42,7 +42,7 @@ jobs:
         run: mypy loctran/ --ignore-missing-imports
 
       - name: Run tests with coverage
-        run: pytest --cov=loctran --cov-report=xml --cov-fail-under=75 -q
+        run: pytest --cov=loctran --cov-report=xml --cov-fail-under=85 -q
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
