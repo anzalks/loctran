@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/) and this project adheres to Semantic Versioning where practical.
 
+## 0.1.6
+
+- fix Pillow getdata deprecation
+- single-source the version
+- add python 3.13 support
+- ship py.typed
+- add repo hygiene files
+- add real-tesseract integration job in ci
+- raise the coverage gate
+
 ## [0.1.3] - 2026-07-21
 
 ### Fixed
