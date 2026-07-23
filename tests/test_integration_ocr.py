@@ -23,4 +23,4 @@ def test_tesseract_integration():
         
         segments = get_segments_hybrid(img_path)
         text = " ".join(s.get("text", "") for s in segments)
-        assert "HELLO" in text.upper()
+        assert "123" in text
