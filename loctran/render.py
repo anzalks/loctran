@@ -55,9 +55,10 @@ def _sample_bg(
                 edge_pixels.extend([pix[0, y], pix[rw - 1, y]])
         if not edge_pixels:
             return "white", "#1a1a2e"
-        r = sum(px[0] for px in edge_pixels) // len(edge_pixels)
-        g = sum(px[1] for px in edge_pixels) // len(edge_pixels)
-        b = sum(px[2] for px in edge_pixels) // len(edge_pixels)
+        from collections import Counter
+        # The background should be the most common color on the edges
+        most_common = Counter(edge_pixels).most_common(1)[0][0]
+        r, g, b = most_common
         luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
         text_css = "#000" if luminance > 0.5 else "#fff"
         return f"rgb({r},{g},{b})", text_css
