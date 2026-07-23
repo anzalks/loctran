@@ -1,0 +1,57 @@
+from unittest.mock import patch, MagicMock
+from loctran.translate import _is_valid_translation, _translate_chunk
+
+
+def test_is_valid_translation():
+    # Valid translations
+    assert _is_valid_translation("Bonjour", "Hello") is True
+    assert _is_valid_translation("42", "42") is True
+    assert _is_valid_translation("N/A", "N/A") is True
+    assert _is_valid_translation("Hi", "Hi") is True
+
+    # Invalid due to empty or whitespace
+    assert _is_valid_translation("", "Hello") is False
+    assert _is_valid_translation("   ", "Hello") is False
+
+    # Invalid due to no alphanumerics
+    assert _is_valid_translation("----", "----") is False
+    assert _is_valid_translation("…", "...") is False
+    assert _is_valid_translation("***", "***") is False
+    assert _is_valid_translation("___", "___") is False
+
+    # Invalid due to runaway generation
+    assert _is_valid_translation("a" * 81, "Hello") is False  # 81 > max(80, 8*5=40)
+    assert (
+        _is_valid_translation("a" * 161, "A" * 20) is False
+    )  # 161 > max(80, 8*20=160)
+    assert _is_valid_translation("a" * 150, "A" * 20) is True  # 150 < 160
+
+    # Invalid due to obvious scaffolding
+    assert _is_valid_translation('"translation": "Bonjour"', "Hello") is False
+    assert _is_valid_translation('"original": "Hello"', "Hello") is False
+    assert (
+        _is_valid_translation('Here is the json: [{"translation": "x"}]', "x") is False
+    )
+    assert _is_valid_translation('```json\n"Bonjour"\n```', "Hello") is False
+
+
+@patch("loctran.translate._get_translate_client")
+def test_translate_chunk_drops_invalid(mock_client):
+    # Setup mock client to return one valid and one invalid translation
+    mock_instance = MagicMock()
+    mock_client.return_value = mock_instance
+    mock_instance.chat.return_value = {
+        "message": {
+            "content": '[{"id": 1, "translation": "Bonjour"}, {"id": 2, "translation": "----"}]'
+        }
+    }
+
+    chunk = [{"id": 1, "text": "Hello"}, {"id": 2, "text": "World"}]
+
+    results = _translate_chunk(chunk, "dummy-model", "fr")
+
+    assert 1 in results
+    assert results[1] == "Bonjour"
+
+    # The invalid "----" should NOT be in the results!
+    assert 2 not in results

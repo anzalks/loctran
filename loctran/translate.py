@@ -282,6 +282,30 @@ def _get_translation_value(item: dict) -> str | None:
     return None
 
 
+def _has_alphanumeric(text: str) -> bool:
+    """Return True if text contains at least one alphanumeric character."""
+    return any(c.isalnum() for c in text)
+
+
+def _is_valid_translation(value: str, original: str) -> bool:
+    """Validate LLM translation output (Phase 1)."""
+    val = value.strip()
+    if not val:
+        return False
+    if not _has_alphanumeric(val):
+        return False
+    if len(val) > max(80, 8 * len(original)):
+        return False
+    if (
+        '"translation":' in val
+        or '"original":' in val
+        or "[{" in val
+        or val.startswith("```")
+    ):
+        return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Retry helper (F3.11 — replaces triplicated inline loops)
 # ---------------------------------------------------------------------------
@@ -309,7 +333,10 @@ def _translate_single_with_retry(
                 messages=[{"role": "user", "content": prompt}],
                 options=_TRANSLATE_OPTIONS,
             )
-            return res["message"]["content"].strip()
+            val = res["message"]["content"].strip()
+            if not _is_valid_translation(val, text):
+                raise TranslationError(f"Invalid translation returned: {val[:20]!r}")
+            return val
         except Exception as exc:
             wait = 0.5 * (attempt + 1)
             logger.warning(
@@ -388,14 +415,16 @@ def _translate_chunk(
             c_id = c["id"]
             c_text = c["text"].strip()
             val = id_map.get(c_id)
-            if val is not None:
+            if val is not None and _is_valid_translation(val, c_text):
                 results[c_id] = val
-            elif orig_map.get(c_text) is not None:
+            elif orig_map.get(c_text) is not None and _is_valid_translation(
+                orig_map[c_text], c_text
+            ):
                 results[c_id] = orig_map[c_text]
             elif pos < len(data):
                 # positional fallback when IDs and original text don't match
                 fallback = _get_translation_value(data[pos])
-                if fallback is not None:
+                if fallback is not None and _is_valid_translation(fallback, c_text):
                     results[c_id] = fallback
 
         logger.debug("Chunk batch mapped %d/%d", len(results), len(chunk))
