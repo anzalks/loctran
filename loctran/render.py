@@ -47,12 +47,17 @@ def _sample_bg(
             )
             pix = region.load()
             rw, rh = region.size
-            pixels = [pix[x, y] for y in range(rh) for x in range(rw)]
-        if not pixels:
+            # Sample only the outer perimeter to avoid text pixels
+            edge_pixels = []
+            for x in range(rw):
+                edge_pixels.extend([pix[x, 0], pix[x, rh - 1]])
+            for y in range(1, rh - 1):
+                edge_pixels.extend([pix[0, y], pix[rw - 1, y]])
+        if not edge_pixels:
             return "white", "#1a1a2e"
-        r = sum(px[0] for px in pixels) // len(pixels)
-        g = sum(px[1] for px in pixels) // len(pixels)
-        b = sum(px[2] for px in pixels) // len(pixels)
+        r = sum(px[0] for px in edge_pixels) // len(edge_pixels)
+        g = sum(px[1] for px in edge_pixels) // len(edge_pixels)
+        b = sum(px[2] for px in edge_pixels) // len(edge_pixels)
         luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
         text_css = "#000" if luminance > 0.5 else "#fff"
         return f"rgb({r},{g},{b})", text_css
