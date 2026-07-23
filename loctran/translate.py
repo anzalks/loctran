@@ -423,11 +423,20 @@ def _translate_chunk(
                 if item.get("id") is not None:
                     # coerce LLM ID to int just in case it returned a string
                     try:
-                        id_map[int(item["id"])] = val
+                        item_id = int(item["id"])
+                        if item_id in id_map:
+                            logger.debug(
+                                "Duplicate ID %d in LLM output, keeping first valid occurrence",
+                                item_id,
+                            )
+                        else:
+                            id_map[item_id] = val
                     except (ValueError, TypeError):
                         pass
                 if isinstance(item.get("original"), str):
-                    orig_map[item["original"].strip()] = val
+                    orig_key = item["original"].strip()
+                    if orig_key not in orig_map:
+                        orig_map[orig_key] = val
 
         results: dict[int, str] = {}
         for pos, c in enumerate(chunk):
@@ -440,8 +449,8 @@ def _translate_chunk(
                 orig_map[c_text], c_text
             ):
                 results[c_id] = orig_map[c_text]
-            elif pos < len(data):
-                # positional fallback when IDs and original text don't match
+            elif pos < len(data) and len(data) == len(chunk):
+                # positional fallback ONLY when lengths match exactly
                 fallback = _get_translation_value(data[pos])
                 if fallback is not None and _is_valid_translation(fallback, c_text):
                     results[c_id] = fallback

@@ -78,3 +78,41 @@ def test_repair_partial_batch(mock_client, mock_single):
     assert results[1] == "Bonjour"
     assert results[2] == "Monde"
     mock_single.assert_called_once_with("World", "fr", "dummy")
+
+
+@patch("loctran.translate._translate_single_with_retry")
+@patch("loctran.translate._get_translate_client")
+def test_positional_fallback_safe(mock_client, mock_single):
+    # Setup mock client to return 3 items without ID and without original,
+    # simulating a dropped item and no way to map except position.
+    mock_instance = MagicMock()
+    mock_client.return_value = mock_instance
+    mock_instance.chat.return_value = {
+        "message": {"content": '["Un", "Deux", "Trois"]'}
+    }
+
+    # Mock repair fallback
+    mock_single.side_effect = [
+        "Un Repair",
+        "Deux Repair",
+        "Trois Repair",
+        "Quatre Repair",
+    ]
+
+    chunk = [
+        {"id": 1, "text": "One"},
+        {"id": 2, "text": "Two"},
+        {"id": 3, "text": "Three"},
+        {"id": 4, "text": "Four"},
+    ]
+
+    results = _translate_chunk(chunk, "dummy", "fr")
+
+    # Because len(data) [3] != len(chunk) [4], positional fallback is DISABLED.
+    # Therefore NONE of the batch results are mapped.
+    # All 4 items must be repaired via the single-item fallback.
+    assert mock_single.call_count == 4
+    assert results[1] == "Un Repair"
+    assert results[2] == "Deux Repair"
+    assert results[3] == "Trois Repair"
+    assert results[4] == "Quatre Repair"
