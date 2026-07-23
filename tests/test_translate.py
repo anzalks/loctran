@@ -776,7 +776,6 @@ class TestModelPolicyCoverage:
         from loctran.model_policy import _get_ollama
 
         with patch.dict("sys.modules", {"ollama": None}):
-
             try:
                 _get_ollama()
             except RuntimeError as e:

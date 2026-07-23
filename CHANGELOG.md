@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/) and this 
 - add repo hygiene files
 - add real-tesseract integration job in ci
 - raise the coverage gate
+- validate LLM translations, repair dropped batch items, remove unsafe positional shifting, pass decoration segments through untouched.
 
 ## [0.1.3] - 2026-07-21
 

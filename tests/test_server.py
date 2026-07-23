@@ -960,9 +960,7 @@ class TestPullModelEndpoint:
         old = dict(srv._model_pull_status)
         try:
             with patch("loctran.server.server.threading.Thread"):
-                resp = client.post(
-                    "/api/pull-model", json={"model": "qwen2.5:7b"}
-                )
+                resp = client.post("/api/pull-model", json={"model": "qwen2.5:7b"})
             assert resp.status_code == 200
             assert resp.json()["status"] == "pulling"
         finally:
@@ -1051,9 +1049,7 @@ class TestSetupEndpoints:
                     return_value={"success": True},
                 ),
             ):
-                resp = client.post(
-                    "/api/setup/install", json={"component": "all"}
-                )
+                resp = client.post("/api/setup/install", json={"component": "all"})
             assert resp.status_code == 200
             assert resp.json()["started"] is True
         finally:

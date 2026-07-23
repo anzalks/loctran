@@ -56,6 +56,7 @@ def _sample_bg(
         if not edge_pixels:
             return "white", "#1a1a2e"
         from collections import Counter
+
         # The background should be the most common color on the edges
         most_common = Counter(edge_pixels).most_common(1)[0][0]
         r, g, b = most_common
@@ -154,7 +155,7 @@ def get_overlay_html(
                 font_cqw = height_cand
             else:
                 font_cqw = min(height_cand, width_cand)
-                
+
         font_size_expr = f"{font_cqw:.4f}cqw"
 
         # F2.4: translations always wrap (text may be longer than original)

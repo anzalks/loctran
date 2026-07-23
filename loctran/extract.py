@@ -537,9 +537,11 @@ def merge_words(
 
     return seg
 
+
 def _hocr_line_sizes(img: Any) -> list[tuple[tuple[int, int, int, int], float]]:
     """Return [(line_bbox, x_size_px), ...] parsed from Tesseract hOCR output."""
     import pytesseract
+
     try:
         hocr_bytes = pytesseract.image_to_pdf_or_hocr(img, extension="hocr")
         if isinstance(hocr_bytes, str):
@@ -555,7 +557,7 @@ def _hocr_line_sizes(img: Any) -> list[tuple[tuple[int, int, int, int], float]]:
     # using regex for safety.
     pattern = re.compile(
         r"class=['\"]ocr_(?:line|header|caption|textfloat)['\"][^>]*?title=['\"](.*?)['\"]",
-        re.IGNORECASE
+        re.IGNORECASE,
     )
     for match in pattern.finditer(hocr_str):
         title_str = match.group(1)
@@ -572,7 +574,9 @@ def _hocr_line_sizes(img: Any) -> list[tuple[tuple[int, int, int, int], float]]:
     return lines
 
 
-def _assign_hocr_sizes(segments: list[dict], hocr_lines: list[tuple[tuple[int, int, int, int], float]]):
+def _assign_hocr_sizes(
+    segments: list[dict], hocr_lines: list[tuple[tuple[int, int, int, int], float]]
+):
     for seg in segments:
         seg_bbox = seg.get("bbox")
         if not seg_bbox:
@@ -580,7 +584,7 @@ def _assign_hocr_sizes(segments: list[dict], hocr_lines: list[tuple[tuple[int, i
         sx0, sy0, sw, sh = seg_bbox
         sx1 = sx0 + sw
         scy = sy0 + sh / 2.0
-        
+
         best_size = None
         max_overlap = -1.0
         for (hx0, hy0, hx1, hy1), x_size in hocr_lines:
@@ -595,6 +599,7 @@ def _assign_hocr_sizes(segments: list[dict], hocr_lines: list[tuple[tuple[int, i
                     best_size = x_size
         if best_size is not None:
             seg["font_px"] = best_size
+
 
 def get_segments_hybrid(
     image_path: str,
@@ -796,6 +801,8 @@ def get_segments_hybrid(
         for w in unique_words:
             if w.get("source") == "inverted" and w["conf"] < 60:
                 continue
+            if w["height"] > img.height * 0.5:
+                continue
             filtered_unique.append(w)
         unique_words = filtered_unique
 
@@ -805,8 +812,14 @@ def get_segments_hybrid(
             added = False
             w_cy = w["top"] + w["height"] / 2
             for line in seg_lines:
-                l_cy = sum(lw["top"] + lw["height"] / 2 for lw in line) / len(line)
-                l_h = sum(lw["height"] for lw in line) / len(line)
+                # Use median for both cy and height to avoid Tesseract outlier traps
+                sorted_line_by_top = sorted(line, key=lambda lw: lw["top"])
+                mid_lw = sorted_line_by_top[len(line) // 2]
+                l_cy = mid_lw["top"] + mid_lw["height"] / 2
+                
+                sorted_line_by_h = sorted(line, key=lambda lw: lw["height"])
+                l_h = sorted_line_by_h[len(line) // 2]["height"]
+                
                 if abs(w_cy - l_cy) < l_h * 0.5:
                     line.append(w)
                     line.sort(key=lambda lw: lw["left"])

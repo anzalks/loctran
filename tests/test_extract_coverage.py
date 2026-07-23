@@ -807,14 +807,10 @@ class TestGetSegmentsHybridBranches:
         mock_detect.return_value = [MagicMock(lang="ja")]
 
         with (
-            patch.object(
-                ext, "_configure_tesseract_path", return_value=fake_pytess
-            ),
+            patch.object(ext, "_configure_tesseract_path", return_value=fake_pytess),
             patch.object(ext, "_get_pillow_image", return_value=Image),
             patch("loctran.extract.detect_langs", mock_detect),
-            patch.object(
-                ext, "_get_tesseract_langs", return_value={"eng"}
-            ),
+            patch.object(ext, "_get_tesseract_langs", return_value={"eng"}),
             patch("loctran.extract.logger") as mock_logger,
         ):
             ext.get_segments_hybrid(ip, source_lang="auto")
