@@ -58,6 +58,26 @@ jobs:
           python -m build
           twine check dist/*
 
+  integration-ocr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
+
+      - name: Install package
+        run: pip install -e ".[test]"
+
+      - name: Run integration tests
+        run: pytest -q tests/test_integration_ocr.py
+
   # --- Release (only on version tags, after all CI passes) ---
 
   build_and_smoke_test:
