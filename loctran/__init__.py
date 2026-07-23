@@ -4,4 +4,9 @@
 
 """Loctran package."""
 
-__version__ = "0.1.5"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("loctran")
+except PackageNotFoundError:  # running from a source tree without install
+    __version__ = "0.0.0.dev0"
