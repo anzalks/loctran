@@ -82,7 +82,7 @@ jobs:
 
   build_and_smoke_test:
     name: Build & Smoke Test
-    needs: test
+    needs: [test, integration-ocr]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
