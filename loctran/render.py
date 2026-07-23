@@ -45,7 +45,9 @@ def _sample_bg(
             region = im.convert("RGB").crop(
                 (max(0, x0 - m), max(0, y0 - m), min(iw, x1 + m), min(ih, y1 + m))
             )
-            pixels = list(region.getdata())
+            pix = region.load()
+            rw, rh = region.size
+            pixels = [pix[x, y] for y in range(rh) for x in range(rw)]
         if not pixels:
             return "white", "#1a1a2e"
         r = sum(px[0] for px in pixels) // len(pixels)
