@@ -135,10 +135,14 @@ def get_overlay_html(
         else:
             width_cand = width_p / (_CHAR_WIDTH_FACTOR * orig_n_chars)
 
-        if is_translated:
-            font_cqw = height_cand
+        if s.get("font_px") is not None and width > 0:
+            font_cqw = (s["font_px"] / width) * 100
         else:
-            font_cqw = min(height_cand, width_cand)
+            if is_translated:
+                font_cqw = height_cand
+            else:
+                font_cqw = min(height_cand, width_cand)
+                
         font_size_expr = f"{font_cqw:.4f}cqw"
 
         # F2.4: translations always wrap (text may be longer than original)

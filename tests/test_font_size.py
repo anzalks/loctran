@@ -82,4 +82,27 @@ def test_hocr_assignment():
     assert segments[1]["font_px"] == 30.0
     assert "font_px" not in segments[2]
 
+def test_renderer_exact_size():
+    import loctran.render as rnd
+    
+    seg = {
+        "text": "Hello",
+        "bbox": [10, 10, 50, 20],
+        "font_px": 20.0
+    }
+    html = rnd.get_overlay_html(1000, 1000, "img.jpg", [seg])
+    # image width is 1000. 20.0 / 1000 * 100 = 2.0000cqw
+    assert "font-size: 2.0000cqw;" in html
+
+def test_renderer_fallback_size():
+    import loctran.render as rnd
+    
+    seg = {
+        "text": "Hello",
+        "bbox": [10, 10, 50, 20],
+        # no font_px
+    }
+    html = rnd.get_overlay_html(1000, 1000, "img.jpg", [seg])
+    assert "font-size:" in html
+    assert "font-size: 2.0000cqw;" not in html
 
