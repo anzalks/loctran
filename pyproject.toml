@@ -72,6 +72,7 @@ where = ["."]
 include = ["loctran*"]
 
 [tool.setuptools.package-data]
+"loctran" = ["py.typed"]
 "loctran.server" = ["static/*", "static/**/*"]
 
 [tool.setuptools.exclude-package-data]
