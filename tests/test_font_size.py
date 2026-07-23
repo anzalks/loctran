@@ -39,3 +39,47 @@ def test_merge_words_font_size_out_of_bounds():
     # 300 * 2 = 600, which is > 0.5 * 1000 (500)
     seg = merge_words(word_list, sx, sy, img_h)
     assert "font_px" not in seg
+
+def test_hocr_line_sizes(monkeypatch):
+    import loctran.extract as ext
+    
+    mock_hocr = """
+    <div class='ocr_page'>
+        <span class='ocr_line' title='bbox 10 20 100 40; baseline 0 -5; x_size 34.5; x_descenders 5; x_ascenders 5'>Text</span>
+        <span class='ocr_line' title='bbox 100 200 200 220; baseline 0 -5; x_descenders 5; x_ascenders 5'>No x_size here</span>
+    </div>
+    """
+    
+    def mock_image_to_pdf_or_hocr(img, extension):
+        return mock_hocr
+        
+    monkeypatch.setattr("pytesseract.image_to_pdf_or_hocr", mock_image_to_pdf_or_hocr)
+    
+    lines = ext._hocr_line_sizes(None)
+    assert len(lines) == 1
+    bbox, x_size = lines[0]
+    assert bbox == (10, 20, 100, 40)
+    assert x_size == 34.5
+
+def test_hocr_assignment():
+    import loctran.extract as ext
+    
+    segments = [
+        {"bbox": [10, 20, 90, 20]}, # center-y = 30, x span 10-100
+        {"bbox": [10, 50, 90, 20]}, # center-y = 60, x span 10-100
+        {"bbox": [10, 100, 90, 20]}, # center-y = 110, no match
+    ]
+    
+    hocr_lines = [
+        ((5, 15, 105, 45), 20.0), # Matches seg 1 perfectly
+        ((0, 45, 50, 75), 25.0), # Matches seg 2, overlap 40
+        ((40, 45, 110, 75), 30.0), # Matches seg 2, overlap 60 (larger horizontal overlap, should win)
+    ]
+    
+    ext._assign_hocr_sizes(segments, hocr_lines)
+    
+    assert segments[0]["font_px"] == 20.0
+    assert segments[1]["font_px"] == 30.0
+    assert "font_px" not in segments[2]
+
+

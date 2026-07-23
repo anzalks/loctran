@@ -24,3 +24,7 @@ def test_tesseract_integration():
         segments = get_segments_hybrid(img_path)
         text = " ".join(s.get("text", "") for s in segments)
         assert "123" in text
+        
+        # Phase 2: assert at least one segment has font_px > 0
+        has_font_px = any(s.get("font_px", 0) > 0 for s in segments)
+        assert has_font_px, "No segment received font_px from hOCR"

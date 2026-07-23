@@ -537,6 +537,64 @@ def merge_words(
 
     return seg
 
+def _hocr_line_sizes(img: Any) -> list[tuple[tuple[int, int, int, int], float]]:
+    """Return [(line_bbox, x_size_px), ...] parsed from Tesseract hOCR output."""
+    import pytesseract
+    try:
+        hocr_bytes = pytesseract.image_to_pdf_or_hocr(img, extension="hocr")
+        if isinstance(hocr_bytes, str):
+            hocr_str = hocr_bytes
+        else:
+            hocr_str = hocr_bytes.decode("utf-8", errors="ignore")
+    except Exception:
+        return []
+
+    lines = []
+    # Match elements like: class='ocr_line' title='bbox 10 20 30 40; x_size 12.5'
+    # Actually, we should match <span class="ocr_line" ... title="bbox x0 y0 x1 y1; baseline ...; x_size 12.5; ...">
+    # using regex for safety.
+    pattern = re.compile(
+        r"class=['\"]ocr_(?:line|header|caption|textfloat)['\"][^>]*?title=['\"](.*?)['\"]",
+        re.IGNORECASE
+    )
+    for match in pattern.finditer(hocr_str):
+        title_str = match.group(1)
+        bbox_match = re.search(r"bbox\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", title_str)
+        x_size_match = re.search(r"x_size\s+([0-9.]+)", title_str)
+        if bbox_match and x_size_match:
+            try:
+                x0, y0, x1, y1 = map(int, bbox_match.groups())
+                x_size = float(x_size_match.group(1))
+                if x_size > 0:
+                    lines.append(((x0, y0, x1, y1), x_size))
+            except ValueError:
+                pass
+    return lines
+
+
+def _assign_hocr_sizes(segments: list[dict], hocr_lines: list[tuple[tuple[int, int, int, int], float]]):
+    for seg in segments:
+        seg_bbox = seg.get("bbox")
+        if not seg_bbox:
+            continue
+        sx0, sy0, sw, sh = seg_bbox
+        sx1 = sx0 + sw
+        scy = sy0 + sh / 2.0
+        
+        best_size = None
+        max_overlap = -1.0
+        for (hx0, hy0, hx1, hy1), x_size in hocr_lines:
+            # Vertically contains the segment's bbox center-y
+            if hy0 <= scy <= hy1:
+                # Horizontal overlap
+                overlap_x0 = max(sx0, hx0)
+                overlap_x1 = min(sx1, hx1)
+                overlap = overlap_x1 - overlap_x0
+                if overlap > 0 and overlap > max_overlap:
+                    max_overlap = overlap
+                    best_size = x_size
+        if best_size is not None:
+            seg["font_px"] = best_size
 
 def get_segments_hybrid(
     image_path: str,
@@ -811,6 +869,13 @@ def get_segments_hybrid(
                     vision_model,
                     measured_char_width=seg_cw,
                 )
+        # Phase 2: per-line size from Tesseract hOCR
+        try:
+            hocr_lines = _hocr_line_sizes(img_proc)
+            if hocr_lines:
+                _assign_hocr_sizes(segments, hocr_lines)
+        except Exception as e:
+            logger.debug("hOCR font size extraction failed: %s", e)
     except Exception as e:
         logger.error(
             "Segment extraction failed for %s: %s\n%s",
